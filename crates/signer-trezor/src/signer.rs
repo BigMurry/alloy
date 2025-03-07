@@ -9,6 +9,9 @@ use async_trait::async_trait;
 use std::fmt;
 use trezor_client::client::Trezor;
 
+#[cfg(feature = "eip712")]
+use alloy_sol_types::{Eip712Domain, SolStruct};
+
 // we need firmware that supports EIP-1559 and EIP-712
 const FIRMWARE_1_MIN_VERSION: &str = ">=1.11.1";
 const FIRMWARE_2_MIN_VERSION: &str = ">=2.5.1";
@@ -49,6 +52,18 @@ impl Signer for TrezorSigner {
     #[inline]
     async fn sign_message(&self, message: &[u8]) -> Result<Signature> {
         self.sign_message_inner(message).await.map_err(alloy_signer::Error::other)
+    }
+
+    #[cfg(feature = "eip712")]
+    #[inline]
+    async fn sign_typed_data<T: SolStruct + Send + Sync>(
+        &self,
+        payload: &T,
+        domain: &Eip712Domain,
+    ) -> Result<Signature> {
+        self.sign_typed_data_(&payload.eip712_hash_struct(), domain)
+            .await
+            .map_err(alloy_signer::Error::other)
     }
 
     #[inline]
@@ -236,6 +251,22 @@ impl TrezorSigner {
         let mut client = self.get_client()?;
         let apath = Self::convert_path(&self.derivation);
         let signature = client.ethereum_sign_message(message.into(), apath)?;
+        signature_from_trezor(signature)
+    }
+
+    #[cfg(feature = "eip712")]
+    async fn sign_typed_data_(
+        &self,
+        hash_struct: &B256,
+        domain: &Eip712Domain,
+    ) -> Result<Signature, LedgerError> {
+        let mut client = self.get_client()?;
+        let apath = Self::convert_path(&self.derivation);
+        let signature = client.ethereum_sign_typed_hash(
+            domain.eip712_hash_struct().into(),
+            hash_struct.into(),
+            apath,
+        )?;
         signature_from_trezor(signature)
     }
 
