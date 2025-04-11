@@ -6,8 +6,8 @@ use gcloud_sdk::{
     google::cloud::kms::{
         self,
         v1::{
-            key_management_service_client::KeyManagementServiceClient, AsymmetricSignRequest,
-            GetPublicKeyRequest, PublicKey,
+            key_management_service_client::KeyManagementServiceClient, public_key::PublicKeyFormat,
+            AsymmetricSignRequest, GetPublicKeyRequest, PublicKey,
         },
     },
     tonic::{self, Request},
@@ -231,7 +231,10 @@ async fn request_get_pubkey(
     client: &Client,
     kms_key_name: &str,
 ) -> Result<PublicKey, GcpSignerError> {
-    let mut request = tonic::Request::new(GetPublicKeyRequest { name: kms_key_name.to_string() });
+    let mut request = tonic::Request::new(GetPublicKeyRequest {
+        name: kms_key_name.to_string(),
+        public_key_format: PublicKeyFormat::Unspecified.into(),
+    });
     request
         .metadata_mut()
         .insert("x-goog-request-params", format!("name={}", &kms_key_name).parse().unwrap());

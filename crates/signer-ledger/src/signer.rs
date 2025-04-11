@@ -167,6 +167,32 @@ impl LedgerSigner {
         Ok(Self { transport: Mutex::new(transport), derivation, chain_id, address })
     }
 
+    /// move the transport from an existing signer into a new signer
+    pub async fn new_with_existing(
+        derivation: DerivationType,
+        chain_id: Option<ChainId>,
+        active_signer: Option<Self>,
+    ) -> Result<Self, LedgerError> {
+        let (transport, address) = match active_signer {
+            Some(active_signer) => {
+                let address = {
+                    let locked_transport = active_signer.transport.lock().await;
+                    Self::get_address_with_path_transport(&locked_transport, &derivation).await?
+                };
+                (active_signer.transport, address)
+            }
+            None => {
+                let transport = Ledger::init().await?;
+                let address =
+                    Self::get_address_with_path_transport(&transport, &derivation).await?;
+                debug!(%address, "Connected to Ledger");
+                (Mutex::new(transport), address)
+            }
+        };
+
+        Ok(Self { transport, derivation, chain_id, address })
+    }
+
     /// Get the account which corresponds to our derivation path
     pub async fn get_address(&self) -> Result<Address, LedgerError> {
         self.get_address_with_path(&self.derivation).await

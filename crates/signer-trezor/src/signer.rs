@@ -12,6 +12,12 @@ use trezor_client::client::Trezor;
 #[cfg(feature = "eip712")]
 use alloy_sol_types::{Eip712Domain, SolStruct};
 
+#[cfg(feature = "eip712")]
+use trezor_client::{
+    client::{handle_interaction, Signature as FirmwareSignature},
+    protos, Error,
+};
+
 // we need firmware that supports EIP-1559 and EIP-712
 const FIRMWARE_1_MIN_VERSION: &str = ">=1.11.1";
 const FIRMWARE_2_MIN_VERSION: &str = ">=2.5.1";
@@ -115,6 +121,28 @@ impl TrezorSigner {
             session_id: vec![],
         };
         signer.initiate_session()?;
+        signer.address = signer.get_address_with_path(&derivation).await?;
+        Ok(signer)
+    }
+
+    /// Instantiates a Trezor signer by reusing existing session
+    #[instrument(ret)]
+    pub async fn new_with_existing(
+        derivation: DerivationType,
+        chain_id: Option<ChainId>,
+        active_signer: Option<Self>,
+    ) -> Result<Self, TrezorError> {
+        let mut signer = Self {
+            derivation: derivation.clone(),
+            chain_id,
+            address: Address::ZERO,
+            session_id: vec![],
+        };
+        if let Some(active_signer) = active_signer {
+            signer.session_id = active_signer.session_id;
+        } else {
+            signer.initiate_session()?;
+        }
         signer.address = signer.get_address_with_path(&derivation).await?;
         Ok(signer)
     }
@@ -259,15 +287,29 @@ impl TrezorSigner {
         &self,
         hash_struct: &B256,
         domain: &Eip712Domain,
-    ) -> Result<Signature, LedgerError> {
+    ) -> Result<Signature, TrezorError> {
         let mut client = self.get_client()?;
         let apath = Self::convert_path(&self.derivation);
-        let signature = client.ethereum_sign_typed_hash(
-            domain.eip712_hash_struct().into(),
-            hash_struct.into(),
-            apath,
-        )?;
-        signature_from_trezor(signature)
+        let mut req = protos::EthereumSignTypedHash::new();
+        req.address_n = apath;
+        req.set_domain_separator_hash(domain.hash_struct().to_vec());
+        req.set_message_hash(hash_struct.to_vec());
+
+        let sig = handle_interaction(client.call(
+            req,
+            Box::new(|_, m: protos::EthereumTypedDataSignature| {
+                let signature = m.signature();
+                if signature.len() != 65 {
+                    return Err(Error::MalformedSignature);
+                }
+                let r = signature[0..32].try_into().unwrap();
+                let s = signature[32..64].try_into().unwrap();
+                let v = signature[64] as u64;
+                Ok(FirmwareSignature { r, s, v })
+            }),
+        )?)?;
+
+        signature_from_trezor(sig)
     }
 
     // helper which converts a derivation path to [u32]
