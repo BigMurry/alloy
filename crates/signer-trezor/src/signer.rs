@@ -292,7 +292,7 @@ impl TrezorSigner {
         let apath = Self::convert_path(&self.derivation);
         let mut req = protos::EthereumSignTypedHash::new();
         req.address_n = apath;
-        req.set_domain_separator_hash(domain.seperator().to_vec());
+        req.set_domain_separator_hash(domain.separator().to_vec());
         req.set_message_hash(hash_struct.to_vec());
 
         let sig = handle_interaction(client.call(
