@@ -12,6 +12,7 @@ use coins_ledger::{
     transports::{Ledger, LedgerAsync},
 };
 use futures_util::lock::Mutex;
+use std::sync::Arc;
 
 #[cfg(feature = "eip712")]
 use alloy_dyn_abi::TypedData;
@@ -26,7 +27,7 @@ use alloy_sol_types::{Eip712Domain, SolStruct};
 /// will always return an error.
 #[derive(Debug)]
 pub struct LedgerSigner {
-    transport: Mutex<Ledger>,
+    transport: Arc<Mutex<Ledger>>,
     derivation: DerivationType,
     pub(crate) chain_id: Option<ChainId>,
     pub(crate) address: Address,
@@ -164,33 +165,30 @@ impl LedgerSigner {
         let address = Self::get_address_with_path_transport(&transport, &derivation).await?;
         debug!(%address, "Connected to Ledger");
 
-        Ok(Self { transport: Mutex::new(transport), derivation, chain_id, address })
+        Ok(Self { transport: Arc::new(Mutex::new(transport)), derivation, chain_id, address })
     }
 
     /// move the transport from an existing signer into a new signer
     pub async fn new_with_existing(
         derivation: DerivationType,
         chain_id: Option<ChainId>,
-        active_signer: Option<Self>,
+        active_signer: Option<&Self>,
     ) -> Result<Self, LedgerError> {
-        let (transport, address) = match active_signer {
+        match active_signer {
             Some(active_signer) => {
                 let address = {
                     let locked_transport = active_signer.transport.lock().await;
                     Self::get_address_with_path_transport(&locked_transport, &derivation).await?
                 };
-                (active_signer.transport, address)
+                Ok(Self {
+                    transport: active_signer.transport.clone(),
+                    derivation,
+                    chain_id,
+                    address,
+                })
             }
-            None => {
-                let transport = Ledger::init().await?;
-                let address =
-                    Self::get_address_with_path_transport(&transport, &derivation).await?;
-                debug!(%address, "Connected to Ledger");
-                (Mutex::new(transport), address)
-            }
-        };
-
-        Ok(Self { transport, derivation, chain_id, address })
+            None => Self::new(derivation, chain_id).await,
+        }
     }
 
     /// Get the account which corresponds to our derivation path

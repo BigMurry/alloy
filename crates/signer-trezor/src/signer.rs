@@ -130,7 +130,7 @@ impl TrezorSigner {
     pub async fn new_with_existing(
         derivation: DerivationType,
         chain_id: Option<ChainId>,
-        active_signer: Option<Self>,
+        active_signer: Option<&Self>,
     ) -> Result<Self, TrezorError> {
         let mut signer = Self {
             derivation: derivation.clone(),
@@ -139,7 +139,7 @@ impl TrezorSigner {
             session_id: vec![],
         };
         if let Some(active_signer) = active_signer {
-            signer.session_id = active_signer.session_id;
+            signer.session_id = active_signer.session_id.clone();
         } else {
             signer.initiate_session()?;
         }
