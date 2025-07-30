@@ -11,11 +11,11 @@ use std::{
 };
 use tokio::sync::oneshot;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 /// Boxed future type used in [`ProviderCall`] for non-wasm targets.
 pub type BoxedFut<Output> = Pin<Box<dyn Future<Output = TransportResult<Output>> + Send>>;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_family = "wasm")]
 /// Boxed future type used in [`ProviderCall`] for wasm targets.
 pub type BoxedFut<Output> = Pin<Box<dyn Future<Output = TransportResult<Output>>>>;
 /// The primary future type for the [`Provider`].
@@ -70,7 +70,7 @@ where
     }
 
     /// Fallible cast to mutable [`RpcCall`]
-    pub fn as_mut_rpc_call(&mut self) -> Option<&mut RpcCall<Params, Resp, Output, Map>> {
+    pub const fn as_mut_rpc_call(&mut self) -> Option<&mut RpcCall<Params, Resp, Output, Map>> {
         match self {
             Self::RpcCall(call) => Some(call),
             _ => None,
@@ -91,7 +91,7 @@ where
     }
 
     /// Fallible cast to mutable [`Waiter`]
-    pub fn as_mut_waiter(&mut self) -> Option<&mut Waiter<Resp, Output, Map>> {
+    pub const fn as_mut_waiter(&mut self) -> Option<&mut Waiter<Resp, Output, Map>> {
         match self {
             Self::Waiter(waiter) => Some(waiter),
             _ => None,

@@ -1,17 +1,24 @@
 mod builder;
-
 mod either;
-use alloy_consensus::{Transaction as TxTrait, TxEnvelope};
+
+pub mod error;
+
+use alloy_consensus::TxEnvelope;
 use alloy_eips::{eip7702::SignedAuthorization, Typed2718};
 use alloy_primitives::{Bytes, ChainId, TxKind, B256, U256};
 pub use either::{AnyTxEnvelope, AnyTypedTransaction};
+use std::error::Error;
 
 mod unknowns;
 pub use unknowns::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
 
 pub use alloy_consensus_any::{AnyHeader, AnyReceiptEnvelope};
 
-use crate::Network;
+use crate::{any::error::AnyConversionError, Network};
+use alloy_consensus::{
+    error::ValueError,
+    transaction::{Either, Recovered},
+};
 use alloy_network_primitives::{BlockResponse, TransactionResponse};
 pub use alloy_rpc_types_any::{AnyRpcHeader, AnyTransactionReceipt};
 use alloy_rpc_types_eth::{AccessList, Block, BlockTransactions, Transaction, TransactionRequest};
@@ -33,9 +40,9 @@ use std::ops::{Deref, DerefMut};
 /// should be aware of the following:
 ///
 /// - The implementation of [`Decodable2718`] for [`AnyTxEnvelope`] will not work for non-Ethereum
-///   transaction types. It will succesfully decode an Ethereum [`TxEnvelope`], but will decode only
-///   the type for any unknown transaction type. It will also leave the buffer unconsumed, which
-///   will cause further deserialization to produce erroneous results.
+///   transaction types. It will successfully decode an Ethereum [`TxEnvelope`], but will decode
+///   only the type for any unknown transaction type. It will also leave the buffer unconsumed,
+///   which will cause further deserialization to produce erroneous results.
 /// - The implementation of [`Encodable2718`] for [`AnyTypedTransaction`] will not work for
 ///   non-Ethereum transaction types. It will encode the type for any unknown transaction type, but
 ///   will not encode any other fields. This is symmetric with the decoding behavior, but still
@@ -76,28 +83,55 @@ impl Network for AnyNetwork {
 }
 
 /// A wrapper for [`AnyRpcBlock`] that allows for handling unknown block types.
+///
+/// This type wraps:
+///  - rpc transaction
+///  - additional fields
 #[derive(Clone, Debug, From, PartialEq, Eq, Deserialize, Serialize)]
 pub struct AnyRpcBlock(pub WithOtherFields<Block<AnyRpcTransaction, AnyRpcHeader>>);
 
 impl AnyRpcBlock {
     /// Create a new [`AnyRpcBlock`].
-    pub fn new(inner: WithOtherFields<Block<AnyRpcTransaction, AnyRpcHeader>>) -> Self {
+    pub const fn new(inner: WithOtherFields<Block<AnyRpcTransaction, AnyRpcHeader>>) -> Self {
         Self(inner)
+    }
+
+    /// Consumes the type and returns the wrapped rpc block.
+    pub fn into_inner(self) -> Block<AnyRpcTransaction, AnyRpcHeader> {
+        self.0.into_inner()
+    }
+
+    /// Attempts to convert the inner RPC [`Block`] into a consensus block.
+    ///
+    /// Returns an [`AnyConversionError`] if any of the conversions fail.
+    pub fn try_into_consensus<T, H>(
+        self,
+    ) -> Result<alloy_consensus::Block<T, H>, AnyConversionError>
+    where
+        T: TryFrom<AnyRpcTransaction, Error: Error + Send + Sync + 'static>,
+        H: TryFrom<AnyHeader, Error: Error + Send + Sync + 'static>,
+    {
+        self.into_inner()
+            .map_header(|h| h.into_consensus())
+            .try_convert_header()
+            .map_err(AnyConversionError::new)?
+            .try_convert_transactions()
+            .map_err(AnyConversionError::new)
+            .map(Block::into_consensus_block)
     }
 
     /// Tries to convert inner transactions into a vector of [`AnyRpcTransaction`].
     ///
     /// Returns an error if the block contains only transaction hashes or if it is an uncle block.
-    pub fn try_into_transactions(self) -> Result<Vec<AnyRpcTransaction>, String> {
-        match self.0.inner.transactions {
-            BlockTransactions::Full(txs) => Ok(txs),
-            BlockTransactions::Hashes(_) => {
-                Err("Block contains only transaction hashes".to_string())
-            }
-            BlockTransactions::Uncle => {
-                Err("Block is an uncle block with no transactions".to_string())
-            }
-        }
+    pub fn try_into_transactions(
+        self,
+    ) -> Result<Vec<AnyRpcTransaction>, ValueError<BlockTransactions<AnyRpcTransaction>>> {
+        self.0.inner.try_into_transactions()
+    }
+
+    /// Consumes the type and returns an iterator over the transactions in this block
+    pub fn into_transactions_iter(self) -> impl Iterator<Item = AnyRpcTransaction> {
+        self.into_inner().transactions.into_transactions()
     }
 }
 
@@ -154,13 +188,36 @@ impl From<Block> for AnyRpcBlock {
     }
 }
 
+impl From<AnyRpcBlock> for Block<AnyRpcTransaction, AnyRpcHeader> {
+    fn from(value: AnyRpcBlock) -> Self {
+        value.into_inner()
+    }
+}
+impl From<AnyRpcBlock> for WithOtherFields<Block<AnyRpcTransaction, AnyRpcHeader>> {
+    fn from(value: AnyRpcBlock) -> Self {
+        value.0
+    }
+}
+
+impl<T, H> TryFrom<AnyRpcBlock> for alloy_consensus::Block<T, H>
+where
+    T: TryFrom<AnyRpcTransaction, Error: Error + Send + Sync + 'static>,
+    H: TryFrom<AnyHeader, Error: Error + Send + Sync + 'static>,
+{
+    type Error = AnyConversionError;
+
+    fn try_from(value: AnyRpcBlock) -> Result<Self, Self::Error> {
+        value.try_into_consensus()
+    }
+}
+
 /// A wrapper for [`AnyRpcTransaction`] that allows for handling unknown transaction types.
 #[derive(Clone, Debug, From, PartialEq, Eq, Deserialize, Serialize)]
 pub struct AnyRpcTransaction(pub WithOtherFields<Transaction<AnyTxEnvelope>>);
 
 impl AnyRpcTransaction {
     /// Create a new [`AnyRpcTransaction`].
-    pub fn new(inner: WithOtherFields<Transaction<AnyTxEnvelope>>) -> Self {
+    pub const fn new(inner: WithOtherFields<Transaction<AnyTxEnvelope>>) -> Self {
         Self(inner)
     }
 
@@ -170,21 +227,89 @@ impl AnyRpcTransaction {
         (inner, other)
     }
 
+    /// Consumes the outer layer for this transaction and returns the inner transaction.
+    pub fn into_inner(self) -> Transaction<AnyTxEnvelope> {
+        self.0.into_inner()
+    }
+
     /// Returns the inner transaction [`TxEnvelope`] if inner tx type if
     /// [`AnyTxEnvelope::Ethereum`].
     pub fn as_envelope(&self) -> Option<&TxEnvelope> {
         self.inner.inner.as_envelope()
     }
 
-    /// Maps the inner transaction to a new type that implements [`TxTrait`].
+    /// Returns the inner Ethereum transaction envelope, if it is an Ethereum transaction.
+    /// If the transaction is not an Ethereum transaction, it is returned as an error.
+    pub fn try_into_envelope(self) -> Result<TxEnvelope, ValueError<AnyTxEnvelope>> {
+        self.0.inner.inner.into_inner().try_into_envelope()
+    }
+
+    /// Attempts to convert the [`AnyRpcTransaction`] into `Either::Right` if this is an unknown
+    /// variant.
     ///
-    /// [`alloy_serde::OtherFields`] are ignored while mapping.
-    pub fn map<F, T: TxTrait>(self, f: F) -> T
+    /// Returns `Either::Left` with the ethereum `TxEnvelope` if this is the
+    /// [`AnyTxEnvelope::Ethereum`] variant and [`Either::Right`] with the converted variant.
+    pub fn try_into_either<T>(self) -> Result<Either<TxEnvelope, T>, T::Error>
     where
-        F: FnOnce(Transaction<AnyTxEnvelope>) -> T,
+        T: TryFrom<Self>,
     {
-        let WithOtherFields { inner, other: _ } = self.0;
-        f(inner)
+        if self.0.inner.inner.inner().is_ethereum() {
+            Ok(Either::Left(self.0.inner.inner.into_inner().try_into_envelope().unwrap()))
+        } else {
+            T::try_from(self).map(Either::Right)
+        }
+    }
+
+    /// Attempts to convert the [`UnknownTxEnvelope`] into `Either::Right` if this is an unknown
+    /// variant.
+    ///
+    /// Returns `Either::Left` with the ethereum `TxEnvelope` if this is the
+    /// [`AnyTxEnvelope::Ethereum`] variant and [`Either::Right`] with the converted variant.
+    pub fn try_unknown_into_either<T>(self) -> Result<Either<TxEnvelope, T>, T::Error>
+    where
+        T: TryFrom<UnknownTxEnvelope>,
+    {
+        self.0.inner.inner.into_inner().try_into_either()
+    }
+
+    /// Applies the given closure to the inner transaction type.
+    ///
+    /// [`alloy_serde::OtherFields`] are stripped away while mapping.
+    /// Applies the given closure to the inner transaction type.
+    pub fn map<Tx>(self, f: impl FnOnce(AnyTxEnvelope) -> Tx) -> Transaction<Tx> {
+        self.into_inner().map(f)
+    }
+
+    /// Applies the given fallible closure to the inner transactions.
+    ///
+    /// [`alloy_serde::OtherFields`] are stripped away while mapping.
+    pub fn try_map<Tx, E>(
+        self,
+        f: impl FnOnce(AnyTxEnvelope) -> Result<Tx, E>,
+    ) -> Result<Transaction<Tx>, E> {
+        self.into_inner().try_map(f)
+    }
+
+    /// Converts the transaction type to the given alternative that is `From<T>`.
+    ///
+    /// [`alloy_serde::OtherFields`] are stripped away while mapping.
+    pub fn convert<U>(self) -> Transaction<U>
+    where
+        U: From<AnyTxEnvelope>,
+    {
+        self.into_inner().map(U::from)
+    }
+
+    /// Converts the transaction to the given alternative that is `TryFrom<T>`
+    ///
+    /// Returns the transaction with the new transaction type if all conversions were successful.
+    ///
+    /// [`alloy_serde::OtherFields`] are stripped away while mapping.
+    pub fn try_convert<U>(self) -> Result<Transaction<U>, U::Error>
+    where
+        U: TryFrom<AnyTxEnvelope>,
+    {
+        self.into_inner().try_map(U::try_from)
     }
 }
 
@@ -212,6 +337,38 @@ impl From<Transaction<TxEnvelope>> for AnyRpcTransaction {
     fn from(tx: Transaction<TxEnvelope>) -> Self {
         let tx = tx.map(AnyTxEnvelope::Ethereum);
         Self(WithOtherFields::new(tx))
+    }
+}
+
+impl From<AnyRpcTransaction> for AnyTxEnvelope {
+    fn from(tx: AnyRpcTransaction) -> Self {
+        tx.0.inner.into_inner()
+    }
+}
+
+impl From<AnyRpcTransaction> for Transaction<AnyTxEnvelope> {
+    fn from(tx: AnyRpcTransaction) -> Self {
+        tx.0.inner
+    }
+}
+
+impl From<AnyRpcTransaction> for WithOtherFields<Transaction<AnyTxEnvelope>> {
+    fn from(tx: AnyRpcTransaction) -> Self {
+        tx.0
+    }
+}
+
+impl From<AnyRpcTransaction> for Recovered<AnyTxEnvelope> {
+    fn from(tx: AnyRpcTransaction) -> Self {
+        tx.0.inner.inner
+    }
+}
+
+impl TryFrom<AnyRpcTransaction> for TxEnvelope {
+    type Error = ValueError<AnyTxEnvelope>;
+
+    fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
+        value.try_into_envelope()
     }
 }
 
@@ -286,12 +443,20 @@ impl alloy_consensus::Transaction for AnyRpcTransaction {
 }
 
 impl TransactionResponse for AnyRpcTransaction {
+    fn tx_hash(&self) -> alloy_primitives::TxHash {
+        self.inner.tx_hash()
+    }
+
     fn block_hash(&self) -> Option<alloy_primitives::BlockHash> {
         self.0.inner.block_hash
     }
 
     fn block_number(&self) -> Option<u64> {
         self.inner.block_number
+    }
+
+    fn transaction_index(&self) -> Option<u64> {
+        self.inner.transaction_index
     }
 
     fn from(&self) -> alloy_primitives::Address {
@@ -301,18 +466,37 @@ impl TransactionResponse for AnyRpcTransaction {
     fn gas_price(&self) -> Option<u128> {
         self.inner.effective_gas_price
     }
-
-    fn transaction_index(&self) -> Option<u64> {
-        self.inner.transaction_index
-    }
-
-    fn tx_hash(&self) -> alloy_primitives::TxHash {
-        self.inner.tx_hash()
-    }
 }
 
 impl Typed2718 for AnyRpcTransaction {
     fn ty(&self) -> u8 {
         self.inner.ty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::B64;
+
+    #[test]
+    fn convert_any_block() {
+        let block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(
+                    AnyHeader {
+                        nonce: Some(B64::ZERO),
+                        mix_hash: Some(B256::ZERO),
+                        ..Default::default()
+                    }
+                    .seal(B256::ZERO),
+                ),
+                BlockTransactions::Full(vec![]),
+            )
+            .into(),
+        );
+
+        let _block: alloy_consensus::Block<TxEnvelope, alloy_consensus::Header> =
+            block.try_into().unwrap();
     }
 }

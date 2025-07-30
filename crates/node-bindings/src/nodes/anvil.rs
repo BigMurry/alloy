@@ -1,6 +1,7 @@
 //! Utilities for launching an Anvil instance.
 
 use crate::NodeError;
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::EthereumWallet;
 use alloy_primitives::{hex, Address, ChainId};
 use alloy_signer::Signer;
@@ -45,13 +46,28 @@ impl AnvilInstance {
     }
 
     /// Returns a mutable reference to the child process.
-    pub fn child_mut(&mut self) -> &mut Child {
+    pub const fn child_mut(&mut self) -> &mut Child {
         &mut self.child
     }
 
     /// Returns the private keys used to instantiate this instance
     pub fn keys(&self) -> &[K256SecretKey] {
         &self.private_keys
+    }
+
+    /// Convenience function that returns the first key.
+    ///
+    /// # Panics
+    ///
+    /// If this instance does not contain any keys
+    #[track_caller]
+    pub fn first_key(&self) -> &K256SecretKey {
+        self.private_keys.first().unwrap()
+    }
+
+    /// Returns the private key for the given index.
+    pub fn nth_key(&self, idx: usize) -> Option<&K256SecretKey> {
+        self.private_keys.get(idx)
     }
 
     /// Returns the addresses used to instantiate this instance
@@ -105,6 +121,18 @@ impl AnvilInstance {
 
 impl Drop for AnvilInstance {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            // anvil has settings for dumping thing the state,cache on SIGTERM, so we try to kill it
+            // with sigterm
+            if let Ok(out) =
+                Command::new("kill").arg("-SIGTERM").arg(self.child.id().to_string()).output()
+            {
+                if out.status.success() {
+                    return;
+                }
+            }
+        }
         self.child.kill().expect("could not kill anvil");
     }
 }
@@ -144,6 +172,7 @@ pub struct Anvil {
     fork: Option<String>,
     fork_block_number: Option<u64>,
     args: Vec<OsString>,
+    envs: Vec<(OsString, OsString)>,
     timeout: Option<u64>,
     keep_stdout: bool,
 }
@@ -197,7 +226,7 @@ impl Anvil {
         self
     }
 
-    /// Sets the path for the the ipc server
+    /// Sets the path for the ipc server
     pub fn ipc_path(mut self, path: impl Into<String>) -> Self {
         self.ipc_path = Some(path.into());
         self
@@ -247,6 +276,58 @@ impl Anvil {
         self
     }
 
+    /// Select the [`EthereumHardfork`] to start anvil with.
+    pub fn hardfork(mut self, hardfork: EthereumHardfork) -> Self {
+        self = self.args(["--hardfork", hardfork.to_string().as_str()]);
+        self
+    }
+
+    /// Set the [`EthereumHardfork`] to [`EthereumHardfork::Paris`].
+    pub fn paris(mut self) -> Self {
+        self = self.hardfork(EthereumHardfork::Paris);
+        self
+    }
+
+    /// Set the [`EthereumHardfork`] to [`EthereumHardfork::Cancun`].
+    pub fn cancun(mut self) -> Self {
+        self = self.hardfork(EthereumHardfork::Cancun);
+        self
+    }
+
+    /// Set the [`EthereumHardfork`] to [`EthereumHardfork::Shanghai`].
+    pub fn shanghai(mut self) -> Self {
+        self = self.hardfork(EthereumHardfork::Shanghai);
+        self
+    }
+
+    /// Set the [`EthereumHardfork`] to [`EthereumHardfork::Prague`].
+    pub fn prague(mut self) -> Self {
+        self = self.hardfork(EthereumHardfork::Prague);
+        self
+    }
+
+    /// Instantiate `anvil` with the `--odyssey` flag.
+    pub fn odyssey(mut self) -> Self {
+        self = self.arg("--odyssey");
+        self
+    }
+
+    /// Adds an argument to pass to the `anvil`.
+    pub fn push_arg<T: Into<OsString>>(&mut self, arg: T) {
+        self.args.push(arg.into());
+    }
+
+    /// Adds multiple arguments to pass to the `anvil`.
+    pub fn extend_args<I, S>(&mut self, args: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        for arg in args {
+            self.push_arg(arg);
+        }
+    }
+
     /// Adds an argument to pass to the `anvil`.
     pub fn arg<T: Into<OsString>>(mut self, arg: T) -> Self {
         self.args.push(arg.into());
@@ -261,6 +342,29 @@ impl Anvil {
     {
         for arg in args {
             self = self.arg(arg);
+        }
+        self
+    }
+
+    /// Adds an environment variable to pass to the `anvil`.
+    pub fn env<K, V>(mut self, key: K, value: V) -> Self
+    where
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        self.envs.push((key.into(), value.into()));
+        self
+    }
+
+    /// Adds multiple environment variables to pass to the `anvil`.
+    pub fn envs<I, K, V>(mut self, envs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        for (key, value) in envs {
+            self = self.env(key, value);
         }
         self
     }
@@ -295,7 +399,12 @@ impl Anvil {
         cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::inherit());
 
         // disable nightly warning
-        cmd.env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "");
+        cmd.env("FOUNDRY_DISABLE_NIGHTLY_WARNING", "")
+            // disable color in logs
+            .env("NO_COLOR", "1");
+
+        // set additional environment variables
+        cmd.envs(self.envs);
 
         let mut port = self.port.unwrap_or_default();
         cmd.arg("-p").arg(port.to_string());
@@ -379,21 +488,13 @@ impl Anvil {
             }
 
             if !private_keys.is_empty() {
-                let (default, remaining) = private_keys.split_first().unwrap();
-                let pks = remaining
-                    .iter()
-                    .map(|key| {
-                        let mut signer = LocalSigner::from(key.clone());
-                        signer.set_chain_id(chain_id);
-                        signer
-                    })
-                    .collect::<Vec<_>>();
-
-                let mut default_signer = LocalSigner::from(default.clone());
-                default_signer.set_chain_id(chain_id);
-                let mut w = EthereumWallet::new(default_signer);
-
-                for pk in pks {
+                let mut private_keys = private_keys.iter().map(|key| {
+                    let mut signer = LocalSigner::from(key.clone());
+                    signer.set_chain_id(chain_id);
+                    signer
+                });
+                let mut w = EthereumWallet::new(private_keys.next().unwrap());
+                for pk in private_keys {
                     w.register_signer(pk);
                 }
                 wallet = Some(w);
@@ -427,5 +528,10 @@ mod test {
         //even though the block time is a f64, it should be passed as a whole number
         let anvil = Anvil::new().block_time(12);
         assert_eq!(anvil.block_time.unwrap().to_string(), "12");
+    }
+
+    #[test]
+    fn spawn_and_drop() {
+        let _ = Anvil::new().block_time(12).try_spawn().map(drop);
     }
 }

@@ -3,10 +3,10 @@ use crate::{
     SignableTransaction, Signed, Transaction, TxType,
 };
 use alloc::vec::Vec;
-use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization, Typed2718};
-use alloy_primitives::{
-    keccak256, Bytes, ChainId, PrimitiveSignature as Signature, TxKind, B256, U256,
+use alloy_eips::{
+    eip2718::IsTyped2718, eip2930::AccessList, eip7702::SignedAuthorization, Typed2718,
 };
+use alloy_primitives::{keccak256, Bytes, ChainId, Signature, TxKind, B256, U256};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable, Header, Result};
 use core::mem;
 
@@ -58,8 +58,8 @@ pub struct TxLegacy {
     /// in the case of contract creation, as an endowment
     /// to the newly created account; formally Tv.
     pub value: U256,
-    /// Input has two uses depending if transaction is Create or Call (if `to` field is None or
-    /// Some). pub init: An unlimited size byte array specifying the
+    /// Input has two uses depending if `to` field is Create or Call.
+    /// pub init: An unlimited size byte array specifying the
     /// EVM-code for the account initialisation procedure CREATE,
     /// data: An unlimited size byte array specifying the
     /// input data of the message call, formally Td.
@@ -112,8 +112,6 @@ impl TxLegacy {
 // Legacy transaction network and 2718 encodings are identical to the RLP
 // encoding.
 impl RlpEcdsaEncodableTx for TxLegacy {
-    const DEFAULT_TX_TYPE: u8 = { Self::TX_TYPE as u8 };
-
     fn rlp_encoded_fields_length(&self) -> usize {
         self.nonce.length()
             + self.gas_price.length()
@@ -179,6 +177,8 @@ impl RlpEcdsaEncodableTx for TxLegacy {
 }
 
 impl RlpEcdsaDecodableTx for TxLegacy {
+    const DEFAULT_TX_TYPE: u8 = { Self::TX_TYPE as u8 };
+
     fn rlp_decode_fields(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         Ok(Self {
             nonce: Decodable::decode(buf)?,
@@ -350,6 +350,12 @@ impl Typed2718 for TxLegacy {
     }
 }
 
+impl IsTyped2718 for TxLegacy {
+    fn is_type(type_id: u8) -> bool {
+        matches!(type_id, 0x00)
+    }
+}
+
 impl Encodable for TxLegacy {
     fn encode(&self, out: &mut dyn BufMut) {
         self.encode_for_signing(out)
@@ -511,20 +517,68 @@ pub mod signed_legacy_serde {
     where
         D: serde::Deserializer<'de>,
     {
-        let SignedLegacy { tx, signature, hash } = SignedLegacy::deserialize(deserializer)?;
-        let (parity, chain_id) = from_eip155_value(signature.v.to())
-            .ok_or_else(|| serde::de::Error::custom("invalid EIP-155 signature parity value"))?;
+        let SignedLegacy { mut tx, signature, hash } = SignedLegacy::deserialize(deserializer)?;
 
-        // Note: some implementations always set the chain id in the response, so we only check if
-        // they differ if both are set.
-        if let Some((tx_chain_id, chain_id)) = tx.chain_id().zip(chain_id) {
-            if tx_chain_id != chain_id {
-                return Err(serde::de::Error::custom("chain id mismatch"));
+        // Optimism pre-Bedrock (and some other L2s) injected system transactions into the chain
+        // where the signature fields (v, r, s) are all zero.
+        // These transactions do not have a valid ECDSA signature, but are valid on-chain.
+        // See: https://github.com/alloy-rs/alloy/issues/2348
+        //
+        // Here, we detect (v=0, r=0, s=0) and treat them as system transactions,
+        // bypassing EIP-155 signature validation.
+        let is_fake_system_signature =
+            signature.r.is_zero() && signature.s.is_zero() && signature.v.is_zero();
+
+        let signature = if is_fake_system_signature {
+            Signature::new(U256::ZERO, U256::ZERO, false)
+        } else {
+            let (parity, chain_id) = from_eip155_value(signature.v.to()).ok_or_else(|| {
+                serde::de::Error::custom("invalid EIP-155 signature parity value")
+            })?;
+
+            // Note: some implementations always set the chain id in the response, so we only check
+            // if they differ if both are set.
+            if let Some((tx_chain_id, chain_id)) = tx.chain_id().zip(chain_id) {
+                if tx_chain_id != chain_id {
+                    return Err(serde::de::Error::custom("chain id mismatch"));
+                }
             }
-        }
-        let mut tx = tx.into_owned();
-        tx.chain_id = chain_id;
-        Ok(Signed::new_unchecked(tx, Signature::new(signature.r, signature.s, parity), hash))
+
+            // update the chain id from decoding the eip155 value
+            tx.to_mut().chain_id = chain_id;
+
+            Signature::new(signature.r, signature.s, parity)
+        };
+        Ok(Signed::new_unchecked(tx.into_owned(), signature, hash))
+    }
+}
+
+#[cfg(feature = "serde")]
+pub mod untagged_legacy_serde {
+    //! Helper module for deserializing legacy transactions and ensuring that the `type` field is
+    //! not present.
+    //!
+    //! This is expected to be used as a fallback for deserializing legacy transactions without a
+    //! tag, and is needed to make sure that unknown transaction variants are explicitly rejected
+    //! instead of being treated as legacy transactions.
+
+    use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub(crate) struct UntaggedLegacy {
+        #[serde(default, rename = "type", deserialize_with = "alloy_serde::reject_if_some")]
+        _ty: Option<()>,
+        #[serde(flatten, with = "crate::transaction::signed_legacy_serde")]
+        tx: Signed<TxLegacy>,
+    }
+
+    /// Deserializes a legacy transaction without a tag.
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Signed<TxLegacy>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        UntaggedLegacy::deserialize(deserializer).map(|tx| tx.tx)
     }
 }
 
@@ -613,6 +667,7 @@ pub(super) mod serde_bincode_compat {
     #[cfg(test)]
     mod tests {
         use arbitrary::Arbitrary;
+        use bincode::config;
         use rand::Rng;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
@@ -635,8 +690,9 @@ pub(super) mod serde_bincode_compat {
                     .unwrap(),
             };
 
-            let encoded = bincode::serialize(&data).unwrap();
-            let decoded: Data = bincode::deserialize(&encoded).unwrap();
+            let encoded = bincode::serde::encode_to_vec(&data, config::legacy()).unwrap();
+            let (decoded, _) =
+                bincode::serde::decode_from_slice::<Data, _>(&encoded, config::legacy()).unwrap();
             assert_eq!(decoded, data);
         }
     }
@@ -644,13 +700,12 @@ pub(super) mod serde_bincode_compat {
 
 #[cfg(all(test, feature = "k256"))]
 mod tests {
+    use super::signed_legacy_serde;
     use crate::{
         transaction::{from_eip155_value, to_eip155_value},
         SignableTransaction, TxLegacy,
     };
-    use alloy_primitives::{
-        address, b256, hex, Address, PrimitiveSignature as Signature, TxKind, B256, U256,
-    };
+    use alloy_primitives::{address, b256, hex, Address, Signature, TxKind, B256, U256};
 
     #[test]
     fn recover_signer_legacy() {
@@ -710,5 +765,44 @@ mod tests {
                 Some((true, Some(chain_id)))
             );
         }
+    }
+
+    #[test]
+    fn can_deserialize_system_transaction_with_zero_signature() {
+        let raw_tx = serde_json::json!({
+            "blockHash": "0x5307b5c812a067f8bc1ed1cc89d319ae6f9a0c9693848bd25c36b5191de60b85",
+            "blockNumber": "0x45a59bb",
+            "from": "0x0000000000000000000000000000000000000000",
+            "gas": "0x1e8480",
+            "gasPrice": "0x0",
+            "hash": "0x16ef68aa8f35add3a03167a12b5d1268e344f6605a64ecc3f1c3aa68e98e4e06",
+            "input": "0xcbd4ece900000000000000000000000032155c9d39084f040ba17890fe8134dbe2a0453f0000000000000000000000004a0126ee88018393b1ad2455060bc350ead9908a000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000469f700000000000000000000000000000000000000000000000000000000000000644ff746f60000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002043e908a4e862aebb10e7e27db0b892b58a7e32af11d64387a414dabc327b00e200000000000000000000000000000000000000000000000000000000",
+            "nonce": "0x469f7",
+            "to": "0x4200000000000000000000000000000000000007",
+            "transactionIndex": "0x0",
+            "value": "0x0",
+            "v": "0x0",
+            "r": "0x0",
+            "s": "0x0",
+            "queueOrigin": "l1",
+            "l1TxOrigin": "0x36bde71c97b33cc4729cf772ae268934f7ab70b2",
+            "l1BlockNumber": "0xfd1a6c",
+            "l1Timestamp": "0x63e434ff",
+            "index": "0x45a59ba",
+            "queueIndex": "0x469f7",
+            "rawTransaction": "0xcbd4ece900000000000000000000000032155c9d39084f040ba17890fe8134dbe2a0453f0000000000000000000000004a0126ee88018393b1ad2455060bc350ead9908a000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000469f700000000000000000000000000000000000000000000000000000000000000644ff746f60000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002043e908a4e862aebb10e7e27db0b892b58a7e32af11d64387a414dabc327b00e200000000000000000000000000000000000000000000000000000000"
+        });
+
+        let signed: crate::Signed<TxLegacy> = signed_legacy_serde::deserialize(raw_tx).unwrap();
+
+        assert_eq!(signed.signature().r(), U256::ZERO);
+        assert_eq!(signed.signature().s(), U256::ZERO);
+        assert!(!signed.signature().v());
+
+        assert_eq!(
+            signed.hash(),
+            &b256!("0x16ef68aa8f35add3a03167a12b5d1268e344f6605a64ecc3f1c3aa68e98e4e06"),
+            "hash should match the transaction hash"
+        );
     }
 }

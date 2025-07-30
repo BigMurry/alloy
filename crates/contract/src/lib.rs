@@ -12,8 +12,11 @@ extern crate self as alloy_contract;
 mod eth_call;
 pub use eth_call::{CallDecoder, EthCall};
 
+mod storage_slot;
+pub use storage_slot::*;
+
 mod error;
-pub use error::{Error, Result};
+pub use error::{Error, Result, TransportErrorExt, TryParseTransportErrorResult};
 
 mod event;
 pub use event::{Event, EventPoller};
@@ -37,13 +40,5 @@ mod multicall;
 #[doc(hidden)]
 pub mod private {
     pub use alloy_network::{Ethereum, Network};
-
-    // Fake traits to mitigate `sol!` macro breaking changes.
-    pub trait Provider<T, N: Network>: alloy_provider::Provider<N> {}
-    impl<N: Network, P: alloy_provider::Provider<N>> Provider<(), N> for P {}
-
-    // This is done so that the compiler can infer the `T` type to be `()`, which is the only type
-    // that implements this fake `Transport` trait.
-    pub trait Transport {}
-    impl Transport for () {}
+    pub use alloy_provider::Provider;
 }

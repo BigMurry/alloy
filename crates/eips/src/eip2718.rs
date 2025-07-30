@@ -3,8 +3,9 @@
 //! [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
 
 use crate::alloc::vec::Vec;
-use alloy_primitives::{keccak256, Bytes, Sealed, B256};
+use alloy_primitives::{keccak256, Bytes, Sealable, Sealed, B256};
 use alloy_rlp::{Buf, BufMut, Header, EMPTY_STRING_CODE};
+use auto_impl::auto_impl;
 use core::fmt;
 
 // https://eips.ethereum.org/EIPS/eip-2718#transactiontype-only-goes-up-to-0x7f
@@ -82,7 +83,7 @@ impl core::error::Error for Eip2718Error {}
 /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
 pub trait Decodable2718: Sized {
     /// Extract the type byte from the buffer, if any. The type byte is the
-    /// first byte, provided that that first byte is 0x7f or lower.
+    /// first byte, provided that first byte is 0x7f or lower.
     fn extract_type_byte(buf: &mut &[u8]) -> Option<u8> {
         buf.first().copied().filter(|b| *b <= TX_TYPE_BYTE_MAX)
     }
@@ -107,7 +108,7 @@ pub trait Decodable2718: Sized {
     /// decoder.
     fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self>;
 
-    /// Encode the transaction according to [EIP-2718] rules. First a 1-byte
+    /// Decode the transaction according to [EIP-2718] rules. First a 1-byte
     /// type flag in the range 0x0-0x7f, then the body of the transaction.
     ///
     /// [EIP-2718] inner encodings are unspecified, and produce an opaque
@@ -121,6 +122,32 @@ pub trait Decodable2718: Sized {
                 Self::typed_decode(ty, buf)
             })
             .unwrap_or_else(|| Self::fallback_decode(buf))
+    }
+
+    /// Decode a transaction according to [EIP-2718], ensuring no trailing bytes.
+    ///
+    /// This method decodes a single transaction from the entire buffer and ensures that the
+    /// buffer is completely consumed. If there are any trailing bytes after the transaction
+    /// data, an error is returned.
+    ///
+    /// This is different from [`decode_2718`](Self::decode_2718) which allows trailing bytes
+    /// in the buffer. This method is useful when you need to ensure that the input contains
+    /// exactly one transaction and nothing else.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The transaction data is invalid
+    /// - There are trailing bytes after the transaction
+    ///
+    /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
+    fn decode_2718_exact(bytes: &[u8]) -> Eip2718Result<Self> {
+        let mut buf = bytes;
+        let tx = Self::decode_2718(&mut buf)?;
+        if !buf.is_empty() {
+            return Err(Eip2718Error::RlpError(alloy_rlp::Error::UnexpectedLength));
+        }
+        Ok(tx)
     }
 
     /// Decode an [EIP-2718] transaction in the network format. The network
@@ -162,6 +189,28 @@ pub trait Decodable2718: Sized {
     }
 }
 
+impl<T: Decodable2718 + Sealable> Decodable2718 for Sealed<T> {
+    fn extract_type_byte(buf: &mut &[u8]) -> Option<u8> {
+        T::extract_type_byte(buf)
+    }
+
+    fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
+        T::typed_decode(ty, buf).map(Self::new)
+    }
+
+    fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
+        T::fallback_decode(buf).map(Self::new)
+    }
+
+    fn decode_2718(buf: &mut &[u8]) -> Eip2718Result<Self> {
+        T::decode_2718(buf).map(Self::new)
+    }
+
+    fn network_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
+        T::network_decode(buf).map(Self::new)
+    }
+}
+
 /// Encoding trait for [EIP-2718] envelopes.
 ///
 /// These envelopes wrap a transaction or a receipt with a type flag. [EIP-2718] encodings are used
@@ -178,6 +227,7 @@ pub trait Decodable2718: Sized {
 /// over the accepted transaction types.
 ///
 /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
+#[auto_impl(&)]
 pub trait Encodable2718: Typed2718 + Sized + Send + Sync {
     /// Return the type flag (if any).
     ///
@@ -224,9 +274,19 @@ pub trait Encodable2718: Typed2718 + Sized + Send + Sync {
     }
 
     /// Seal the encodable, by encoding and hashing it.
+    #[auto_impl(keep_default_for(&))]
     fn seal(self) -> Sealed<Self> {
         let hash = self.trie_hash();
         Sealed::new_unchecked(self, hash)
+    }
+
+    /// A convenience function that encodes the value in the 2718 format and wraps it in a
+    /// [`WithEncoded`] wrapper.
+    ///
+    /// See also [`WithEncoded::from_2718_encodable`].
+    #[auto_impl(keep_default_for(&))]
+    fn into_encoded(self) -> WithEncoded<Self> {
+        WithEncoded::from_2718_encodable(self)
     }
 
     /// The length of the 2718 encoded envelope in network format. This is the
@@ -252,6 +312,20 @@ pub trait Encodable2718: Typed2718 + Sized + Send + Sync {
         }
 
         self.encode_2718(out);
+    }
+}
+
+impl<T: Encodable2718> Encodable2718 for Sealed<T> {
+    fn encode_2718_len(&self) -> usize {
+        self.inner().encode_2718_len()
+    }
+
+    fn encode_2718(&self, out: &mut dyn alloy_rlp::BufMut) {
+        self.inner().encode_2718(out);
+    }
+
+    fn trie_hash(&self) -> B256 {
+        self.hash()
     }
 }
 
@@ -299,6 +373,12 @@ pub trait Typed2718 {
     /// Returns true if the type is an EIP-7702 transaction.
     fn is_eip7702(&self) -> bool {
         self.ty() == EIP7702_TX_TYPE_ID
+    }
+}
+
+impl<T: Typed2718> Typed2718 for Sealed<T> {
+    fn ty(&self) -> u8 {
+        self.inner().ty()
     }
 }
 
@@ -398,5 +478,43 @@ impl<L: Typed2718, R: Typed2718> Typed2718 for either::Either<L, R> {
             Self::Left(l) => l.ty(),
             Self::Right(r) => r.ty(),
         }
+    }
+}
+
+/// Trait for checking if a transaction envelope supports a given EIP-2718 type ID.
+pub trait IsTyped2718 {
+    /// Returns true if the given type ID corresponds to a supported typed transaction.
+    fn is_type(type_id: u8) -> bool;
+}
+
+impl<L, R> IsTyped2718 for either::Either<L, R>
+where
+    L: IsTyped2718,
+    R: IsTyped2718,
+{
+    fn is_type(type_id: u8) -> bool {
+        L::is_type(type_id) || R::is_type(type_id)
+    }
+}
+
+impl<L, R> Decodable2718 for either::Either<L, R>
+where
+    L: Decodable2718 + IsTyped2718,
+    R: Decodable2718,
+{
+    fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
+        if L::is_type(ty) {
+            let envelope = L::typed_decode(ty, buf)?;
+            Ok(Self::Left(envelope))
+        } else {
+            let other = R::typed_decode(ty, buf)?;
+            Ok(Self::Right(other))
+        }
+    }
+    fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
+        if buf.is_empty() {
+            return Err(Eip2718Error::RlpError(alloy_rlp::Error::InputTooShort));
+        }
+        L::fallback_decode(buf).map(Self::Left)
     }
 }

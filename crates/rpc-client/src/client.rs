@@ -1,6 +1,6 @@
 use crate::{poller::PollerBuilder, BatchRequest, ClientBuilder, RpcCall};
 use alloy_json_rpc::{Id, Request, RpcRecv, RpcSend};
-use alloy_transport::{BoxTransport, IntoBoxTransport};
+use alloy_transport::{mock::Asserter, BoxTransport, IntoBoxTransport};
 use std::{
     borrow::Cow,
     ops::Deref,
@@ -23,9 +23,6 @@ pub type NoParams = [(); 0];
 
 #[cfg(feature = "pubsub")]
 type MaybePubsub = Option<alloy_pubsub::PubSubFrontend>;
-
-#[cfg(not(feature = "pubsub"))]
-type MaybePubsub = Option<()>;
 
 /// A JSON-RPC client.
 ///
@@ -50,6 +47,22 @@ impl RpcClient {
 }
 
 impl RpcClient {
+    /// Creates a new [`RpcClient`] with the given transport.
+    pub fn new(t: impl IntoBoxTransport, is_local: bool) -> Self {
+        Self::new_maybe_pubsub(
+            t,
+            is_local,
+            #[cfg(feature = "pubsub")]
+            None,
+        )
+    }
+
+    /// Create a new [`RpcClient`] with a transport that returns mocked responses from the given
+    /// [`Asserter`].
+    pub fn mocked(asserter: Asserter) -> Self {
+        Self::new(alloy_transport::mock::MockTransport::new(asserter), true)
+    }
+
     /// Create a new [`RpcClient`] with an HTTP transport.
     #[cfg(feature = "reqwest")]
     pub fn new_http(url: reqwest::Url) -> Self {
@@ -58,18 +71,26 @@ impl RpcClient {
         Self::new(http, is_local)
     }
 
-    /// Creates a new [`RpcClient`] with the given transport.
-    pub fn new(t: impl IntoBoxTransport, is_local: bool) -> Self {
-        Self::new_maybe_pubsub(t, is_local, None)
+    /// Create a new [`RpcClient`] with an HTTP transport using a pre-built [`reqwest::Client`].
+    #[cfg(feature = "reqwest")]
+    pub fn new_http_with_client(client: reqwest::Client, url: reqwest::Url) -> Self {
+        let http = alloy_transport_http::Http::with_client(client, url);
+        let is_local = http.guess_local();
+        Self::new(http, is_local)
     }
 
-    /// Creates a new [`RpcClient`] with the given transport and an optional [`MaybePubsub`].
-    pub(crate) fn new_maybe_pubsub(
+    /// Creates a new [`RpcClient`] with the given transport and a `MaybePubsub`.
+    fn new_maybe_pubsub(
         t: impl IntoBoxTransport,
         is_local: bool,
-        pubsub: MaybePubsub,
+        #[cfg(feature = "pubsub")] pubsub: MaybePubsub,
     ) -> Self {
-        Self(Arc::new(RpcClientInner::new_maybe_pubsub(t, is_local, pubsub)))
+        Self(Arc::new(RpcClientInner::new_maybe_pubsub(
+            t,
+            is_local,
+            #[cfg(feature = "pubsub")]
+            pubsub,
+        )))
     }
 
     /// Creates the [`RpcClient`] with the `main_transport` (ipc, ws, http) and a `layer` closure.
@@ -78,8 +99,9 @@ impl RpcClient {
     /// transport services. The `main_transport` is expected to the type that actually emits the
     /// request object: `PubSubFrontend`. This exists so that we can intercept the
     /// `PubSubFrontend` which we need for [`RpcClientInner::pubsub_frontend`].
+    ///
     /// This workaround exists because due to how [`tower::ServiceBuilder::service`] collapses into
-    /// a [`BoxTransport`] we wouldn't be obtain the [`MaybePubsub`] by downcasting the layered
+    /// a [`BoxTransport`] we wouldn't be obtain the `MaybePubsub` by downcasting the layered
     /// `transport`.
     pub(crate) fn new_layered<F, T, R>(is_local: bool, main_transport: T, layer: F) -> Self
     where
@@ -149,7 +171,7 @@ impl RpcClient {
 
     /// Boxes the transport.
     #[deprecated(since = "0.9.0", note = "`RpcClient` is now always boxed")]
-    #[allow(clippy::missing_const_for_fn)]
+    #[expect(clippy::missing_const_for_fn)]
     pub fn boxed(self) -> Self {
         self
     }
@@ -192,7 +214,7 @@ pub struct RpcClientInner {
     /// layer the actual transport can be an arbitrary type and we would be unable to obtain the
     /// `PubSubFrontend` by downcasting the `transport`. For example
     /// `RetryTransport<PubSubFrontend>`.
-    #[allow(unused)]
+    #[cfg(feature = "pubsub")]
     pub(crate) pubsub: MaybePubsub,
     /// `true` if the transport is local.
     pub(crate) is_local: bool,
@@ -211,6 +233,7 @@ impl RpcClientInner {
     pub fn new(t: impl IntoBoxTransport, is_local: bool) -> Self {
         Self {
             transport: t.into_box_transport(),
+            #[cfg(feature = "pubsub")]
             pubsub: None,
             is_local,
             id: AtomicU64::new(0),
@@ -223,9 +246,13 @@ impl RpcClientInner {
     pub(crate) fn new_maybe_pubsub(
         t: impl IntoBoxTransport,
         is_local: bool,
-        pubsub: MaybePubsub,
+        #[cfg(feature = "pubsub")] pubsub: MaybePubsub,
     ) -> Self {
-        Self { pubsub, ..Self::new(t.into_box_transport(), is_local) }
+        Self {
+            #[cfg(feature = "pubsub")]
+            pubsub,
+            ..Self::new(t.into_box_transport(), is_local)
+        }
     }
 
     /// Sets the starting ID for the client.
@@ -253,7 +280,7 @@ impl RpcClientInner {
 
     /// Returns a mutable reference to the underlying transport.
     #[inline]
-    pub fn transport_mut(&mut self) -> &mut BoxTransport {
+    pub const fn transport_mut(&mut self) -> &mut BoxTransport {
         &mut self.transport
     }
 
@@ -313,7 +340,7 @@ impl RpcClientInner {
 
     /// Set the `is_local` flag.
     #[inline]
-    pub fn set_local(&mut self, is_local: bool) {
+    pub const fn set_local(&mut self, is_local: bool) {
         self.is_local = is_local;
     }
 
@@ -362,7 +389,7 @@ impl RpcClientInner {
     /// Type erase the service in the transport, allowing it to be used in a
     /// generic context.
     #[deprecated(since = "0.9.0", note = "`RpcClientInner` is now always boxed")]
-    #[allow(clippy::missing_const_for_fn)]
+    #[expect(clippy::missing_const_for_fn)]
     pub fn boxed(self) -> Self {
         self
     }
@@ -398,7 +425,7 @@ mod pubsub_impl {
     }
 
     impl RpcClient {
-        /// Connect to a transport via a [`PubSubConnect`] implementor.
+        /// Connect to a transport via a [`PubSubConnect`] implementer.
         pub async fn connect_pubsub<C: PubSubConnect>(connect: C) -> TransportResult<Self> {
             ClientBuilder::default().pubsub(connect).await
         }

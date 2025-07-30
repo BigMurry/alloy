@@ -20,6 +20,7 @@ pub use self::{
 };
 
 pub mod call;
+pub mod erc7562;
 pub mod four_byte;
 pub mod mux;
 pub mod noop;
@@ -282,7 +283,7 @@ pub enum GethDebugBuiltInTracerType {
     /// The output is an object where the keys correspond to account addresses.
     #[serde(rename = "prestateTracer")]
     PreStateTracer,
-    /// This tracer is noop. It returns an empty object and is only meant for testing the setup.
+    /// This tracer is a noop. It returns an empty object and is only meant for testing the setup.
     #[serde(rename = "noopTracer")]
     NoopTracer,
     /// The mux tracer is a tracer that can run multiple tracers at once.
@@ -300,6 +301,31 @@ pub enum GethDebugTracerType {
     BuiltInTracer(GethDebugBuiltInTracerType),
     /// custom JS tracer
     JsTracer(String),
+}
+
+impl GethDebugTracerType {
+    /// Returns true if this a [`GethDebugTracerType::JsTracer`] variant.
+    pub const fn is_js(&self) -> bool {
+        matches!(self, Self::JsTracer(_))
+    }
+
+    /// Returns the tracer type as a string.
+    ///
+    /// If this is not a builtin tracer, it returns the captured string, which could be JavaScript
+    /// code or a custom identifier such as `"tracer": "stylusTracer"`
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::BuiltInTracer(tracer) => match tracer {
+                GethDebugBuiltInTracerType::FourByteTracer => "4byteTracer",
+                GethDebugBuiltInTracerType::CallTracer => "callTracer",
+                GethDebugBuiltInTracerType::FlatCallTracer => "flatCallTracer",
+                GethDebugBuiltInTracerType::PreStateTracer => "prestateTracer",
+                GethDebugBuiltInTracerType::NoopTracer => "noopTracer",
+                GethDebugBuiltInTracerType::MuxTracer => "muxTracer",
+            },
+            Self::JsTracer(code) => code,
+        }
+    }
 }
 
 impl From<GethDebugBuiltInTracerType> for GethDebugTracerType {
@@ -412,7 +438,7 @@ pub struct GethDebugTracingOptions {
     pub tracer: Option<GethDebugTracerType>,
     /// Config specific to given `tracer`.
     ///
-    /// Note default struct logger config are historically embedded in main object.
+    /// Note default struct logger config is historically embedded in main object.
     ///
     /// tracerConfig is slated for Geth v1.11.0
     /// See <https://github.com/ethereum/go-ethereum/issues/26513>
@@ -708,8 +734,8 @@ fn serialize_string_storage_map_opt<S: Serializer>(
         Some(storage) => {
             let mut m = s.serialize_map(Some(storage.len()))?;
             for (key, val) in storage {
-                let key = format!("{:?}", key);
-                let val = format!("{:?}", val);
+                let key = format!("{key:?}");
+                let val = format!("{val:?}");
                 // skip the 0x prefix
                 m.serialize_entry(&key.as_str()[2..], &val.as_str()[2..])?;
             }
@@ -848,5 +874,21 @@ mod tests {
         let inner = geth_trace.try_into_call_frame();
         assert!(inner.is_err());
         assert!(matches!(inner, Err(UnexpectedTracerError(_))));
+    }
+
+    // <https://github.com/paradigmxyz/reth/issues/16289>
+    #[test]
+    fn test_deserde_json_debug_trace_call_json_tracer() {
+        let s = include_str!("../../test_data/call_tracer/json-call-tracer16289.json");
+        let opts: GethDebugTracingCallOptions = serde_json::from_str(s).unwrap();
+        assert!(opts.tracing_options.tracer.unwrap().is_js());
+    }
+
+    #[test]
+    fn deserde_jstracer() {
+        let s = r#"{
+      "tracer": "{fault: function(log) {}, step: function(log) { const memToHex = mem => mem.reduce((s, byte) => s + byte.toString(16).padStart(2, '0'), ''); }, result: function() { return this.data; }}"
+      }"#;
+        let _tracer = serde_json::from_str::<GethDebugTracingOptions>(s).unwrap();
     }
 }

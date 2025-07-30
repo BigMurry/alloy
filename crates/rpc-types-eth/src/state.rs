@@ -15,14 +15,39 @@ pub struct StateOverridesBuilder {
 
 impl StateOverridesBuilder {
     /// Create a new StateOverridesBuilder.
-    pub fn new(map: AddressHashMap<AccountOverride>) -> Self {
+    pub const fn new(map: AddressHashMap<AccountOverride>) -> Self {
         Self { overrides: map }
+    }
+
+    /// Creates a new [`StateOverridesBuilder`] with the given capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self::new(StateOverride::with_capacity_and_hasher(capacity, Default::default()))
     }
 
     /// Adds an account override for a specific address.
     pub fn append(mut self, address: Address, account_override: AccountOverride) -> Self {
         self.overrides.insert(address, account_override);
         self
+    }
+
+    /// Helper `append` function that appends an optional override.
+    pub fn append_opt<F>(self, f: F) -> Self
+    where
+        F: FnOnce() -> Option<(Address, AccountOverride)>,
+    {
+        if let Some((add, acc)) = f() {
+            self.append(add, acc)
+        } else {
+            self
+        }
+    }
+
+    /// Apply a function to the builder, returning the modified builder.
+    pub fn apply<F>(self, f: F) -> Self
+    where
+        F: FnOnce(Self) -> Self,
+    {
+        f(self)
     }
 
     /// Adds multiple account overrides from an iterator.
@@ -75,6 +100,12 @@ impl StateOverridesBuilder {
     ) -> Self {
         self.overrides.entry(address).or_default().set_state_diff(state_diff);
         self
+    }
+}
+
+impl FromIterator<(Address, AccountOverride)> for StateOverridesBuilder {
+    fn from_iter<T: IntoIterator<Item = (Address, AccountOverride)>>(iter: T) -> Self {
+        Self::new(StateOverride::from_iter(iter))
     }
 }
 
@@ -150,13 +181,13 @@ impl AccountOverride {
     }
 
     /// Configures the balance override
-    pub fn with_balance(mut self, balance: U256) -> Self {
+    pub const fn with_balance(mut self, balance: U256) -> Self {
         self.balance = Some(balance);
         self
     }
 
     /// Configures the nonce override
-    pub fn with_nonce(mut self, nonce: u64) -> Self {
+    pub const fn with_nonce(mut self, nonce: u64) -> Self {
         self.nonce = Some(nonce);
         self
     }
@@ -177,17 +208,17 @@ impl AccountOverride {
     }
 
     /// Sets the balance override in place.
-    pub fn set_balance(&mut self, balance: U256) {
+    pub const fn set_balance(&mut self, balance: U256) {
         self.balance = Some(balance);
     }
 
     /// Sets the nonce override in place.
-    pub fn set_nonce(&mut self, nonce: u64) {
+    pub const fn set_nonce(&mut self, nonce: u64) {
         self.nonce = Some(nonce);
     }
 
     /// Sets the move precompile address in place.
-    pub fn set_move_precompile_to(&mut self, address: Address) {
+    pub const fn set_move_precompile_to(&mut self, address: Address) {
         self.move_precompile_to = Some(address);
     }
 
@@ -200,7 +231,7 @@ impl AccountOverride {
     }
 
     /// Conditionally sets the balance override and returns self.
-    pub fn with_balance_opt(mut self, balance: Option<U256>) -> Self {
+    pub const fn with_balance_opt(mut self, balance: Option<U256>) -> Self {
         if let Some(balance) = balance {
             self.balance = Some(balance);
         }
@@ -208,7 +239,7 @@ impl AccountOverride {
     }
 
     /// Conditionally sets the nonce override and returns self.
-    pub fn with_nonce_opt(mut self, nonce: Option<u64>) -> Self {
+    pub const fn with_nonce_opt(mut self, nonce: Option<u64>) -> Self {
         if let Some(nonce) = nonce {
             self.nonce = Some(nonce);
         }
@@ -216,7 +247,7 @@ impl AccountOverride {
     }
 
     /// Conditionally sets the move precompile address and returns self.
-    pub fn with_move_precompile_to_opt(mut self, address: Option<Address>) -> Self {
+    pub const fn with_move_precompile_to_opt(mut self, address: Option<Address>) -> Self {
         if let Some(address) = address {
             self.move_precompile_to = Some(address);
         }

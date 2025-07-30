@@ -78,6 +78,14 @@ impl<T, H> Block<T, H> {
         Self { header, uncles: vec![], transactions, withdrawals: None }
     }
 
+    /// Returns the block's number.
+    pub fn number(&self) -> u64
+    where
+        H: BlockHeader,
+    {
+        self.header.number()
+    }
+
     /// Apply a function to the block, returning the modified block.
     pub fn apply<F>(self, f: F) -> Self
     where
@@ -104,15 +112,29 @@ impl<T, H> Block<T, H> {
         self
     }
 
+    /// Tries to convert inner transactions into a vector of full transactions
+    ///
+    /// Returns an error if the block contains only transaction hashes or if it is an uncle block.
+    pub fn try_into_transactions(self) -> Result<Vec<T>, ValueError<BlockTransactions<T>>> {
+        self.transactions.try_into_transactions()
+    }
+
+    /// Consumes the type and returns the transactions as a vector.
+    ///
+    /// Note: if this is an uncle or hashes, this will return an empty vector.
+    pub fn into_transactions_vec(self) -> Vec<T> {
+        self.transactions.into_transactions_vec()
+    }
+
     /// Converts this block into a [`BlockBody`].
     ///
     /// Returns an error if the transactions are not full or if the block has uncles.
     pub fn try_into_block_body(self) -> Result<BlockBody<T, H>, ValueError<Self>> {
         if !self.uncles.is_empty() {
-            return Err(ValueError::new(self, "uncles not empty"));
+            return Err(ValueError::new_static(self, "uncles not empty"));
         }
         if !self.transactions.is_full() {
-            return Err(ValueError::new(self, "transactions not full"));
+            return Err(ValueError::new_static(self, "transactions not full"));
         }
 
         Ok(self.into_block_body_unchecked())
@@ -131,6 +153,25 @@ impl<T, H> Block<T, H> {
         }
     }
 
+    /// Consumes the block and returns the [`alloy_consensus::Block`] with the current transaction
+    /// and header type.
+    ///
+    /// Note: Unlike [`Self::into_consensus`], this method returns the Header type `H` as-is without
+    /// converting it to [`alloy_consensus::Header`], See [`Header::into_consensus`].
+    ///
+    /// This has two caveats:
+    ///  - The returned block will always have empty uncles.
+    ///  - If the block's transaction is not [`BlockTransactions::Full`], the returned block will
+    ///    have an empty transaction vec.
+    pub fn into_consensus_block(self) -> alloy_consensus::Block<T, H> {
+        alloy_consensus::BlockBody {
+            transactions: self.transactions.into_transactions_vec(),
+            ommers: vec![],
+            withdrawals: self.withdrawals,
+        }
+        .into_block(self.header)
+    }
+
     /// Converts the block's header type by applying a function to it.
     pub fn map_header<U>(self, f: impl FnOnce(H) -> U) -> Block<T, U> {
         Block {
@@ -139,6 +180,21 @@ impl<T, H> Block<T, H> {
             transactions: self.transactions,
             withdrawals: self.withdrawals,
         }
+    }
+
+    /// Consumes the block and only returns the rpc header.
+    ///
+    /// To obtain the underlying [`alloy_consensus::Header`] use [`Block::into_consensus_header`].
+    pub fn into_header(self) -> H {
+        self.header
+    }
+
+    /// Converts the block's header type to the given alternative that is `TryFrom<H>`
+    pub fn try_convert_header<U>(self) -> Result<Block<T, U>, U::Error>
+    where
+        U: TryFrom<H>,
+    {
+        self.try_map_header(U::try_from)
     }
 
     /// Converts the block's header type by applying a fallible function to it.
@@ -233,6 +289,27 @@ impl<T, H: Sealable + Encodable> Block<T, Header<H>> {
 }
 
 impl<T> Block<T> {
+    /// Returns the block's hash as received from rpc.
+    pub const fn hash(&self) -> B256 {
+        self.header.hash
+    }
+
+    /// Returns a sealed reference of the header: `Sealed<&Header>`
+    pub const fn sealed_header(&self) -> Sealed<&alloy_consensus::Header> {
+        Sealed::new_unchecked(&self.header.inner, self.header.hash)
+    }
+
+    /// Consumes the type and returns the sealed [`alloy_consensus::Header`].
+    pub fn into_sealed_header(self) -> Sealed<alloy_consensus::Header> {
+        self.header.into_sealed()
+    }
+
+    /// Consumes the type, strips away the rpc context from the rpc [`Header`] type and just returns
+    /// the [`alloy_consensus::Header`].
+    pub fn into_consensus_header(self) -> alloy_consensus::Header {
+        self.header.into_consensus()
+    }
+
     /// Constructs block from a consensus block and `total_difficulty`.
     pub fn from_consensus(block: alloy_consensus::Block<T>, total_difficulty: Option<U256>) -> Self
     where
@@ -252,7 +329,8 @@ impl<T> Block<T> {
         }
     }
 
-    /// Consumes the block and returns the [`alloy_consensus::Block`].
+    /// Consumes the block and returns the ethereum [`alloy_consensus::Block`] with the ethereum
+    /// header type.
     ///
     /// This has two caveats:
     ///  - The returned block will always have empty uncles.
@@ -266,6 +344,21 @@ impl<T> Block<T> {
             withdrawals,
         }
         .into_block(header.into_consensus())
+    }
+
+    /// Same as [`Self::into_consensus`] but returns the block as [`Sealed`] with the block's hash.
+    pub fn into_consensus_sealed(self) -> Sealed<alloy_consensus::Block<T>> {
+        let hash = self.header.hash;
+        Sealed::new_unchecked(self.into_consensus(), hash)
+    }
+}
+
+impl<T, S> From<Block<T>> for alloy_consensus::Block<S>
+where
+    S: From<T>,
+{
+    fn from(block: Block<T>) -> Self {
+        block.into_consensus().convert_transactions()
     }
 }
 
@@ -344,7 +437,7 @@ impl<H> Header<H> {
     }
 
     /// Applies the given closure to the inner header.
-    #[allow(clippy::use_self)]
+    #[expect(clippy::use_self)]
     pub fn map<H1>(self, f: impl FnOnce(H) -> H1) -> Header<H1> {
         let Header { hash, inner, total_difficulty, size } = self;
 
@@ -352,7 +445,7 @@ impl<H> Header<H> {
     }
 
     /// Applies the given fallible closure to the inner header.
-    #[allow(clippy::use_self)]
+    #[expect(clippy::use_self)]
     pub fn try_map<H1, E>(self, f: impl FnOnce(H) -> Result<H1, E>) -> Result<Header<H1>, E> {
         let Header { hash, inner, total_difficulty, size } = self;
 
@@ -522,8 +615,8 @@ pub enum BlockError {
 }
 
 #[cfg(feature = "serde")]
-impl From<Block> for alloy_serde::WithOtherFields<Block> {
-    fn from(inner: Block) -> Self {
+impl<T, H> From<Block<T, H>> for alloy_serde::WithOtherFields<Block<T, H>> {
+    fn from(inner: Block<T, H>) -> Self {
         Self { inner, other: Default::default() }
     }
 }
@@ -597,6 +690,79 @@ pub struct BlockOverrides {
     /// EVM opcode BLOCKHASH.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub block_hash: Option<BTreeMap<u64, B256>>,
+}
+
+impl BlockOverrides {
+    /// Returns true if all fields are None, false if any field is not None
+    pub const fn is_empty(&self) -> bool {
+        self.number.is_none()
+            && self.difficulty.is_none()
+            && self.time.is_none()
+            && self.gas_limit.is_none()
+            && self.coinbase.is_none()
+            && self.random.is_none()
+            && self.base_fee.is_none()
+            && self.block_hash.is_none()
+    }
+
+    /// Sets the block number override
+    pub const fn with_number(mut self, number: U256) -> Self {
+        self.number = Some(number);
+        self
+    }
+
+    /// Sets the difficulty override
+    pub const fn with_difficulty(mut self, difficulty: U256) -> Self {
+        self.difficulty = Some(difficulty);
+        self
+    }
+
+    /// Sets the timestamp override
+    pub const fn with_time(mut self, time: u64) -> Self {
+        self.time = Some(time);
+        self
+    }
+
+    /// Sets the gas limit override
+    pub const fn with_gas_limit(mut self, gas_limit: u64) -> Self {
+        self.gas_limit = Some(gas_limit);
+        self
+    }
+
+    /// Sets the coinbase (fee recipient) override
+    pub const fn with_coinbase(mut self, coinbase: Address) -> Self {
+        self.coinbase = Some(coinbase);
+        self
+    }
+
+    /// Sets the randomness (prevRandao) override
+    pub const fn with_random(mut self, random: B256) -> Self {
+        self.random = Some(random);
+        self
+    }
+
+    /// Sets the base fee override
+    pub const fn with_base_fee(mut self, base_fee: U256) -> Self {
+        self.base_fee = Some(base_fee);
+        self
+    }
+
+    /// Adds a block hash override for a specific block number
+    pub fn append_block_hash(mut self, block_number: u64, hash: B256) -> Self {
+        let hash_map = self.block_hash.get_or_insert_with(Default::default);
+        hash_map.insert(block_number, hash);
+        self
+    }
+
+    /// Adds multiple block hash overrides from an iterator
+    pub fn with_block_hash_overrides<I>(mut self, hashes: I) -> Self
+    where
+        I: IntoIterator<Item = (u64, B256)>,
+    {
+        let map = self.block_hash.get_or_insert_with(Default::default);
+        map.extend(hashes);
+        self
+    }
 }
 
 impl<T: TransactionResponse, H> BlockResponse for Block<T, H> {
@@ -799,6 +965,40 @@ mod tests {
     fn block_overrides() {
         let s = r#"{"blockNumber": "0xe39dd0"}"#;
         let _overrides = serde_json::from_str::<BlockOverrides>(s).unwrap();
+    }
+
+    #[test]
+    fn block_overrides_is_empty() {
+        // Default should be empty
+        let default_overrides = BlockOverrides::default();
+        assert!(default_overrides.is_empty());
+
+        // With one field set should not be empty
+        let overrides_with_number = BlockOverrides::default().with_number(U256::from(42));
+        assert!(!overrides_with_number.is_empty());
+
+        let overrides_with_difficulty = BlockOverrides::default().with_difficulty(U256::from(100));
+        assert!(!overrides_with_difficulty.is_empty());
+
+        let overrides_with_time = BlockOverrides::default().with_time(12345);
+        assert!(!overrides_with_time.is_empty());
+
+        let overrides_with_gas_limit = BlockOverrides::default().with_gas_limit(21000);
+        assert!(!overrides_with_gas_limit.is_empty());
+
+        let overrides_with_coinbase =
+            BlockOverrides::default().with_coinbase(Address::with_last_byte(1));
+        assert!(!overrides_with_coinbase.is_empty());
+
+        let overrides_with_random = BlockOverrides::default().with_random(B256::with_last_byte(1));
+        assert!(!overrides_with_random.is_empty());
+
+        let overrides_with_base_fee = BlockOverrides::default().with_base_fee(U256::from(20));
+        assert!(!overrides_with_base_fee.is_empty());
+
+        let overrides_with_block_hash =
+            BlockOverrides::default().append_block_hash(1, B256::with_last_byte(1));
+        assert!(!overrides_with_block_hash.is_empty());
     }
 
     #[test]
@@ -1177,6 +1377,7 @@ mod tests {
 
     // <https://github.com/succinctlabs/kona/issues/31>
     #[test]
+    #[cfg(feature = "serde")]
     fn deserde_tenderly_block() {
         let s = include_str!("../testdata/tenderly.sepolia.json");
         let _block: Block = serde_json::from_str(s).unwrap();

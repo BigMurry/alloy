@@ -165,12 +165,18 @@ provider-anvil-api = [
 provider-debug-api = [
     "providers",
     "alloy-provider?/debug-api",
+    "rpc-types-debug",
     "rpc-types-trace",
 ]
 provider-engine-api = [
     "providers",
     "alloy-provider?/engine-api",
     "rpc-types-engine",
+]
+provider-mev-api = [
+    "providers",
+    "alloy-provider?/mev-api",
+    "rpc-types-mev",
 ]
 provider-net-api = ["providers", "alloy-provider?/net-api"]
 provider-trace-api = [
@@ -215,16 +221,24 @@ rpc-types-anvil = [
     "alloy-rpc-types?/anvil",
     "alloy-provider?/anvil-api",
 ]
-rpc-types-beacon = ["rpc-types", "alloy-rpc-types?/beacon"]
-rpc-types-debug = ["rpc-types", "alloy-provider?/debug-api"]
+rpc-types-any = ["rpc-types", "alloy-rpc-types?/any"]
+rpc-types-beacon = [
+    "rpc-types",
+    "alloy-rpc-types?/beacon",
+]
+rpc-types-debug = [
+    "rpc-types",
+    "alloy-rpc-types?/debug",
+    "alloy-provider?/debug-api",
+]
 rpc-types-engine = [
     "rpc-types",
     "alloy-rpc-types?/engine",
     "alloy-provider?/engine-api",
 ]
 rpc-types-eth = ["rpc-types", "alloy-rpc-types?/eth"]
-rpc-types-mev = ["rpc-types", "alloy-rpc-types?/mev"]
 rpc-types-json = ["rpc-types", "alloy-rpc-types?/jsonrpsee-types"]
+rpc-types-mev = ["rpc-types", "alloy-rpc-types?/mev"]
 rpc-types-trace = [
     "rpc-types",
     "alloy-rpc-types?/trace",
@@ -286,6 +300,7 @@ serde = [
     "alloy-consensus?/serde",
     "dep:alloy-serde",
 ]
+serde-bincode-compat = ["alloy-consensus/serde-bincode-compat"]
 ssz = ["alloy-rpc-types?/ssz", "alloy-eips?/ssz"]
 k256 = [
     "alloy-core/k256",
@@ -310,5 +325,6 @@ arbitrary = [
     "alloy-consensus?/arbitrary",
     "alloy-eips?/arbitrary",
     "alloy-rpc-types?/arbitrary",
+    "alloy-serde?/arbitrary",
 ]
 postgres = ["alloy-core/postgres"]

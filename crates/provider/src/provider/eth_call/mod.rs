@@ -2,8 +2,12 @@ use crate::ProviderCall;
 use alloy_eips::BlockId;
 use alloy_json_rpc::RpcRecv;
 use alloy_network::Network;
-use alloy_primitives::Address;
-use alloy_rpc_types_eth::state::{AccountOverride, StateOverride};
+use alloy_primitives::{Address, Bytes};
+use alloy_rpc_types_eth::{
+    state::{AccountOverride, StateOverride},
+    BlockOverrides,
+};
+use alloy_sol_types::SolCall;
 use alloy_transport::TransportResult;
 use futures::FutureExt;
 use std::{future::Future, marker::PhantomData, sync::Arc, task::Poll};
@@ -20,7 +24,7 @@ pub use caller::Caller;
 /// The [`EthCallFut`] future is the future type for an `eth_call` RPC request.
 #[derive(Debug)]
 #[doc(hidden)] // Not public API.
-#[allow(unnameable_types)]
+#[expect(unnameable_types)]
 #[pin_project::pin_project]
 pub struct EthCallFut<N, Resp, Output, Map>
 where
@@ -236,6 +240,12 @@ where
         self
     }
 
+    /// Set the state overrides for this call, if any.
+    pub fn overrides_opt(mut self, overrides: Option<StateOverride>) -> Self {
+        self.params.overrides = overrides;
+        self
+    }
+
     /// Appends a single [AccountOverride] to the state override.
     ///
     /// Creates a new [`StateOverride`] if none has been set yet.
@@ -247,7 +257,7 @@ where
         self
     }
 
-    /// Extends the the given [AccountOverride] to the state override.
+    /// Extends the given [AccountOverride] to the state override.
     ///
     /// Creates a new [`StateOverride`] if none has been set yet.
     pub fn account_overrides(
@@ -260,10 +270,45 @@ where
         self
     }
 
+    /// Sets the block overrides for this call.
+    pub fn with_block_overrides(mut self, overrides: BlockOverrides) -> Self {
+        self.params.block_overrides = Some(overrides);
+        self
+    }
+
+    /// Sets the block overrides for this call, if any.
+    pub fn with_block_overrides_opt(mut self, overrides: Option<BlockOverrides>) -> Self {
+        self.params.block_overrides = overrides;
+        self
+    }
+
     /// Set the block to use for this call.
     pub const fn block(mut self, block: BlockId) -> Self {
         self.params.block = Some(block);
         self
+    }
+}
+
+impl<N> EthCall<N, Bytes>
+where
+    N: Network,
+{
+    /// Decode the [`Bytes`] returned by an `"eth_call"` into a [`SolCall::Return`] type.
+    ///
+    /// ## Note
+    ///
+    /// The result of the `eth_call` will be [`alloy_sol_types::Result`] with the Ok variant
+    /// containing the decoded [`SolCall::Return`] type.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let call = EthCall::call(provider, data).decode_resp::<MySolCall>().await?.unwrap();
+    ///
+    /// assert!(matches!(call.return_value, MySolCall::MyStruct { .. }));
+    /// ```
+    pub fn decode_resp<S: SolCall>(self) -> EthCall<N, Bytes, alloy_sol_types::Result<S::Return>> {
+        self.map_resp(|data| S::abi_decode_returns(&data))
     }
 }
 

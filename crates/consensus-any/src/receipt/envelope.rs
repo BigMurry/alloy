@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Result, Encodable2718},
@@ -78,6 +79,11 @@ impl<T> AnyReceiptEnvelope<T> {
         self.inner.logs_bloom
     }
 
+    /// Return a reference to the receipt's bloom.
+    pub const fn bloom_ref(&self) -> &Bloom {
+        &self.inner.logs_bloom
+    }
+
     /// Returns the cumulative gas used at this receipt.
     pub const fn cumulative_gas_used(&self) -> u64 {
         self.inner.receipt.cumulative_gas_used
@@ -112,7 +118,14 @@ where
     }
 
     fn logs(&self) -> &[T] {
-        self.logs()
+        Self::logs(self)
+    }
+
+    fn into_logs(self) -> Vec<Self::Log>
+    where
+        Self::Log: Clone,
+    {
+        self.inner.receipt.logs
     }
 }
 

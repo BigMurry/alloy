@@ -25,12 +25,12 @@ mod client;
 pub use client::{ClientRef, NoParams, RpcClient, RpcClientInner, WeakClient};
 
 mod poller;
-pub use poller::{PollChannel, PollerBuilder};
+pub use poller::{PollChannel, PollerBuilder, PollerStream};
 
 #[cfg(feature = "ws")]
 pub use alloy_transport_ws::WsConnect;
 
-#[cfg(all(feature = "ipc", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "ipc", not(target_family = "wasm")))]
 pub use alloy_transport_ipc::IpcConnect;
 
 /// A client using a [`reqwest`] HTTP transport.

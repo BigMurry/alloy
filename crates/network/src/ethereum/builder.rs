@@ -4,7 +4,7 @@ use crate::{
 };
 use alloy_consensus::{TxType, TypedTransaction};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
-use alloy_rpc_types_eth::{request::TransactionRequest, AccessList};
+use alloy_rpc_types_eth::{request::TransactionRequest, AccessList, TransactionInputKind};
 
 impl TransactionBuilder<Ethereum> for TransactionRequest {
     fn chain_id(&self) -> Option<ChainId> {
@@ -23,12 +23,28 @@ impl TransactionBuilder<Ethereum> for TransactionRequest {
         self.nonce = Some(nonce);
     }
 
+    fn take_nonce(&mut self) -> Option<u64> {
+        self.nonce.take()
+    }
+
     fn input(&self) -> Option<&Bytes> {
         self.input.input()
     }
 
     fn set_input<T: Into<Bytes>>(&mut self, input: T) {
         self.input.input = Some(input.into());
+    }
+
+    fn set_input_kind<T: Into<Bytes>>(&mut self, input: T, kind: TransactionInputKind) {
+        match kind {
+            TransactionInputKind::Input => self.input.input = Some(input.into()),
+            TransactionInputKind::Data => self.input.data = Some(input.into()),
+            TransactionInputKind::Both => {
+                let bytes = input.into();
+                self.input.input = Some(bytes.clone());
+                self.input.data = Some(bytes);
+            }
+        }
     }
 
     fn from(&self) -> Option<Address> {
@@ -173,7 +189,7 @@ mod tests {
     };
     use alloy_consensus::{BlobTransactionSidecar, TxEip1559, TxType, TypedTransaction};
     use alloy_eips::eip7702::Authorization;
-    use alloy_primitives::{Address, PrimitiveSignature as Signature, U256};
+    use alloy_primitives::{Address, Signature, U256};
     use alloy_rpc_types_eth::{AccessList, TransactionRequest};
     use std::str::FromStr;
 
@@ -349,13 +365,12 @@ mod tests {
         };
 
         assert_eq!(tx_type, TxType::Eip4844);
-        assert_eq!(errors.len(), 7);
+        assert_eq!(errors.len(), 6);
         assert!(errors.contains(&"to"));
         assert!(errors.contains(&"nonce"));
         assert!(errors.contains(&"gas_limit"));
         assert!(errors.contains(&"max_priority_fee_per_gas"));
         assert!(errors.contains(&"max_fee_per_gas"));
-        assert!(errors.contains(&"to"));
         assert!(errors.contains(&"max_fee_per_blob_gas"));
     }
 

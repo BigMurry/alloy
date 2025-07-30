@@ -40,14 +40,14 @@ impl<T> Receipt<T>
 where
     T: AsRef<Log>,
 {
-    /// Calculates [`Log`]'s bloom filter. this is slow operation and [ReceiptWithBloom] can
-    /// be used to cache this value.
+    /// Calculates [`Log`]'s bloom filter. This is slow operation and
+    /// [`ReceiptWithBloom`] can be used to cache this value.
     pub fn bloom_slow(&self) -> Bloom {
         self.logs.iter().map(AsRef::as_ref).collect()
     }
 
-    /// Calculates the bloom filter for the receipt and returns the [ReceiptWithBloom] container
-    /// type.
+    /// Calculates the bloom filter for the receipt and returns the
+    /// [`ReceiptWithBloom`] container type.
     pub fn with_bloom(self) -> ReceiptWithBloom<Self> {
         ReceiptWithBloom { logs_bloom: self.bloom_slow(), receipt: self }
     }
@@ -91,6 +91,13 @@ where
 
     fn logs(&self) -> &[Self::Log] {
         &self.logs
+    }
+
+    fn into_logs(self) -> Vec<Self::Log>
+    where
+        Self::Log: Clone,
+    {
+        self.logs
     }
 }
 
@@ -315,6 +322,11 @@ impl<R> ReceiptWithBloom<R> {
     pub fn into_components(self) -> (R, Bloom) {
         (self.receipt, self.logs_bloom)
     }
+
+    /// Returns a reference to the bloom.
+    pub const fn bloom_ref(&self) -> &Bloom {
+        &self.logs_bloom
+    }
 }
 
 impl<L> ReceiptWithBloom<Receipt<L>> {
@@ -386,7 +398,7 @@ where
 
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub(crate) mod serde_bincode_compat {
-    use alloc::{borrow::Cow, vec::Vec};
+    use alloc::borrow::Cow;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
@@ -406,8 +418,8 @@ pub(crate) mod serde_bincode_compat {
     /// }
     /// ```
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct Receipt<'a, T: Clone> {
-        logs: Cow<'a, Vec<T>>,
+    pub struct Receipt<'a, T: Clone = alloy_primitives::Log> {
+        logs: Cow<'a, [T]>,
         status: bool,
         cumulative_gas_used: u64,
     }
@@ -456,6 +468,7 @@ pub(crate) mod serde_bincode_compat {
         use super::super::{serde_bincode_compat, Receipt};
         use alloy_primitives::Log;
         use arbitrary::Arbitrary;
+        use bincode::config;
         use rand::Rng;
         use serde::{de::DeserializeOwned, Deserialize, Serialize};
         use serde_with::serde_as;
@@ -477,8 +490,10 @@ pub(crate) mod serde_bincode_compat {
             // ensure we don't have an invalid poststate variant
             data.receipt.status = data.receipt.status.coerce_status().into();
 
-            let encoded = bincode::serialize(&data).unwrap();
-            let decoded: Data<Log> = bincode::deserialize(&encoded).unwrap();
+            let encoded = bincode::serde::encode_to_vec(&data, config::legacy()).unwrap();
+            let (decoded, _) =
+                bincode::serde::decode_from_slice::<Data<Log>, _>(&encoded, config::legacy())
+                    .unwrap();
             assert_eq!(decoded, data);
         }
     }
@@ -541,7 +556,7 @@ mod test {
     }
 
     #[test]
-    fn rountrip_encodable_eip1559() {
+    fn roundtrip_encodable_eip1559() {
         let receipts =
             Receipts { receipt_vec: vec![vec![ReceiptEnvelope::Eip1559(Default::default())]] };
 

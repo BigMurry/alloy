@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 
 use alloc::{string::String, vec::Vec};
-use alloy_primitives::{Address, Bytes, B256, B512, U256};
+use alloy_primitives::{Address, Bytes, B256, B512, KECCAK256_EMPTY, U256};
 
 // re-export account type for `eth_getAccount`
 pub use alloy_consensus::Account;
@@ -9,9 +9,43 @@ pub use alloy_consensus::Account;
 /// Account information.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct AccountInfo {
-    /// Account name
-    pub name: String,
+    /// Account balance
+    pub balance: U256,
+    /// Account nonce
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    pub nonce: u64,
+    /// Account code
+    pub code: Bytes,
+}
+
+impl AccountInfo {
+    /// Returns true if the code hash is the Keccak256 hash of the empty string `""`.
+    #[inline]
+    pub fn is_empty_code_hash(&self) -> bool {
+        self.code.is_empty()
+    }
+
+    /// Returns the code hash of the account.
+    pub fn code_hash(&self) -> B256 {
+        if self.code.is_empty() {
+            KECCAK256_EMPTY
+        } else {
+            alloy_primitives::keccak256(&self.code)
+        }
+    }
+
+    /// Returns if an account is empty.
+    ///
+    /// An account is empty if the following conditions are met.
+    /// - code hash is the Keccak256 hash of the empty string `""`
+    /// - balance is zero
+    /// - nonce is zero
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.is_empty_code_hash() && self.balance.is_zero() && self.nonce == 0
+    }
 }
 
 /// Data structure with proof for one single storage-entry
@@ -61,6 +95,18 @@ pub struct EIP1186AccountProofResponse {
     pub account_proof: Vec<Bytes>,
     /// The storage proof.
     pub storage_proof: Vec<EIP1186StorageProof>,
+}
+
+#[cfg(feature = "serde")]
+impl EIP1186AccountProofResponse {
+    /// After `SpuriousDragon` empty account is defined as account with nonce == 0 && balance == 0
+    /// && bytecode = None (or hash is [`KECCAK_EMPTY`](alloy_consensus::constants::KECCAK_EMPTY)).
+    pub fn is_empty(&self) -> bool {
+        self.nonce == 0
+            && self.balance.is_zero()
+            && self.storage_hash.is_zero()
+            && self.code_hash == alloy_consensus::constants::KECCAK_EMPTY
+    }
 }
 
 /// Extended account information (used by `parity_allAccountInfo`).

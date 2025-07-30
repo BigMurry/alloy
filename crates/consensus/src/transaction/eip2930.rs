@@ -1,6 +1,8 @@
 use crate::{SignableTransaction, Transaction, TxType};
-use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization, Typed2718};
-use alloy_primitives::{Bytes, ChainId, PrimitiveSignature as Signature, TxKind, B256, U256};
+use alloy_eips::{
+    eip2718::IsTyped2718, eip2930::AccessList, eip7702::SignedAuthorization, Typed2718,
+};
+use alloy_primitives::{Bytes, ChainId, Signature, TxKind, B256, U256};
 use alloy_rlp::{BufMut, Decodable, Encodable};
 use core::mem;
 
@@ -47,14 +49,16 @@ pub struct TxEip2930 {
     /// in the case of contract creation, as an endowment
     /// to the newly created account; formally Tv.
     pub value: U256,
-    /// The accessList specifies a list of addresses and storage keys;
-    /// these addresses and storage keys are added into the `accessed_addresses`
+    /// The access list. See [EIP-2930](https://eips.ethereum.org/EIPS/eip-2930).
+    ///
+    /// The `access_list` specifies a list of addresses and storage keys that the transaction
+    /// plans to access. These addresses and storage keys are added into the `accessed_addresses`
     /// and `accessed_storage_keys` global sets (introduced in EIP-2929).
     /// A gas cost is charged, though at a discount relative to the cost of
     /// accessing outside the list.
     pub access_list: AccessList,
-    /// Input has two uses depending if transaction is Create or Call (if `to` field is None or
-    /// Some). pub init: An unlimited size byte array specifying the
+    /// Input has two uses depending if `to` field is Create or Call.
+    /// pub init: An unlimited size byte array specifying the
     /// EVM-code for the account initialisation procedure CREATE,
     /// data: An unlimited size byte array specifying the
     /// input data of the message call, formally Td.
@@ -83,8 +87,6 @@ impl TxEip2930 {
 }
 
 impl RlpEcdsaEncodableTx for TxEip2930 {
-    const DEFAULT_TX_TYPE: u8 = { Self::tx_type() as u8 };
-
     /// Outputs the length of the transaction's fields, without a RLP header.
     fn rlp_encoded_fields_length(&self) -> usize {
         self.chain_id.length()
@@ -110,6 +112,8 @@ impl RlpEcdsaEncodableTx for TxEip2930 {
 }
 
 impl RlpEcdsaDecodableTx for TxEip2930 {
+    const DEFAULT_TX_TYPE: u8 = { Self::tx_type() as u8 };
+
     fn rlp_decode_fields(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         Ok(Self {
             chain_id: Decodable::decode(buf)?,
@@ -216,6 +220,12 @@ impl Typed2718 for TxEip2930 {
     }
 }
 
+impl IsTyped2718 for TxEip2930 {
+    fn is_type(type_id: u8) -> bool {
+        matches!(type_id, 0x01)
+    }
+}
+
 impl SignableTransaction<Signature> for TxEip2930 {
     fn set_chain_id(&mut self, chain_id: ChainId) {
         self.chain_id = chain_id;
@@ -251,7 +261,7 @@ impl Decodable for TxEip2930 {
 mod tests {
     use super::*;
     use crate::{SignableTransaction, TxEnvelope};
-    use alloy_primitives::{Address, PrimitiveSignature as Signature, TxKind, U256};
+    use alloy_primitives::{Address, Signature, TxKind, U256};
     use alloy_rlp::{Decodable, Encodable};
 
     #[test]
@@ -397,6 +407,7 @@ pub(super) mod serde_bincode_compat {
     #[cfg(test)]
     mod tests {
         use arbitrary::Arbitrary;
+        use bincode::config;
         use rand::Rng;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
@@ -419,8 +430,9 @@ pub(super) mod serde_bincode_compat {
                     .unwrap(),
             };
 
-            let encoded = bincode::serialize(&data).unwrap();
-            let decoded: Data = bincode::deserialize(&encoded).unwrap();
+            let encoded = bincode::serde::encode_to_vec(&data, config::legacy()).unwrap();
+            let (decoded, _) =
+                bincode::serde::decode_from_slice::<Data, _>(&encoded, config::legacy()).unwrap();
             assert_eq!(decoded, data);
         }
     }

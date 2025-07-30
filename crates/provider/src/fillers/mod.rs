@@ -12,6 +12,8 @@ use alloy_primitives::{
     Address, BlockHash, BlockNumber, StorageKey, StorageValue, TxHash, B256, U128, U256,
 };
 use alloy_rpc_client::NoParams;
+#[cfg(feature = "pubsub")]
+use alloy_rpc_types_eth::pubsub::{Params, SubscriptionKind};
 use alloy_rpc_types_eth::{Bundle, Index, SyncStatus};
 pub use chain_id::ChainIdFiller;
 use std::borrow::Cow;
@@ -29,10 +31,13 @@ mod join_fill;
 pub use join_fill::JoinFill;
 use tracing::error;
 
+#[cfg(feature = "pubsub")]
+use crate::GetSubscription;
 use crate::{
     provider::SendableTx, EthCall, EthCallMany, EthGetBlock, FilterPollerBuilder, Identity,
     PendingTransaction, PendingTransactionBuilder, PendingTransactionConfig,
     PendingTransactionError, Provider, ProviderCall, ProviderLayer, RootProvider, RpcWithBlock,
+    SendableTxErr,
 };
 use alloy_json_rpc::RpcError;
 use alloy_network::{AnyNetwork, Ethereum, Network};
@@ -43,7 +48,7 @@ use alloy_rpc_types_eth::{
     AccessListResult, EIP1186AccountProofResponse, EthCallResponse, FeeHistory, Filter,
     FilterChanges, Log,
 };
-use alloy_transport::TransportResult;
+use alloy_transport::{TransportError, TransportResult};
 use async_trait::async_trait;
 use futures_utils_wasm::impl_future;
 use serde_json::value::RawValue;
@@ -53,6 +58,18 @@ use std::marker::PhantomData;
 /// management, and chain-id fetching.
 pub type RecommendedFiller =
     JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>;
+
+/// Error type for failures in the `fill_envelope` function.
+#[derive(Debug, thiserror::Error)]
+pub enum FillEnvelopeError<T> {
+    /// A transport error occurred during the filling process.
+    #[error("transport error during filling: {0}")]
+    Transport(TransportError),
+
+    /// The transaction is not ready to be converted to an envelope.
+    #[error("transaction not ready: {0}")]
+    NotReady(SendableTxErr<T>),
+}
 
 /// The control flow for a filler.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,7 +179,7 @@ pub trait TxFiller<N: Network = Ethereum>: Clone + Send + Sync + std::fmt::Debug
     /// properties.
     fn status(&self, tx: &N::TransactionRequest) -> FillerControlFlow;
 
-    /// Returns `true` if the filler is should continue filling.
+    /// Returns `true` if the filler should continue filling.
     fn continue_filling(&self, tx: &SendableTx<N>) -> bool {
         tx.as_builder().is_some_and(|tx| self.status(tx).is_ready())
     }
@@ -196,6 +213,20 @@ pub trait TxFiller<N: Network = Ethereum>: Clone + Send + Sync + std::fmt::Debug
         tx: SendableTx<N>,
     ) -> impl_future!(<Output = TransportResult<SendableTx<N>>>);
 
+    /// Fills in the transaction request and try to convert it to an envelope.
+    fn fill_envelope(
+        &self,
+        fillable: Self::Fillable,
+        tx: SendableTx<N>,
+    ) -> impl_future!(<Output = Result<N::TxEnvelope, FillEnvelopeError<N::TransactionRequest>>>)
+    {
+        async move {
+            let tx = self.fill(fillable, tx).await.map_err(FillEnvelopeError::Transport)?;
+            let envelope = tx.try_into_envelope().map_err(FillEnvelopeError::NotReady)?;
+            Ok(envelope)
+        }
+    }
+
     /// Prepares and fills the transaction request with the fillable properties.
     fn prepare_and_fill<P>(
         &self,
@@ -218,7 +249,7 @@ pub trait TxFiller<N: Network = Ethereum>: Clone + Send + Sync + std::fmt::Debug
     }
 
     /// Prepares transaction request with necessary fillers required for eth_call operations
-    /// asyncronously
+    /// asynchronously
     fn prepare_call(
         &self,
         tx: &mut N::TransactionRequest,
@@ -229,7 +260,7 @@ pub trait TxFiller<N: Network = Ethereum>: Clone + Send + Sync + std::fmt::Debug
     }
 
     /// Prepares transaction request with necessary fillers required for eth_call operations
-    /// syncronously
+    /// synchronously
     fn prepare_call_sync(&self, tx: &mut N::TransactionRequest) -> TransportResult<()> {
         let _ = tx;
         // No-op default
@@ -314,8 +345,8 @@ where
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait(?Send))]
+#[cfg_attr(not(target_family = "wasm"), async_trait)]
 impl<F, P, N> Provider<N> for FillProvider<F, P, N>
 where
     F: TxFiller<N>,
@@ -346,7 +377,7 @@ where
 
     fn call_many<'req>(
         &self,
-        bundles: &'req Vec<Bundle>,
+        bundles: &'req [Bundle],
     ) -> EthCallMany<'req, N, Vec<Vec<EthCallResponse>>> {
         self.inner.call_many(bundles)
     }
@@ -386,6 +417,13 @@ where
 
     fn get_gas_price(&self) -> ProviderCall<NoParams, U128, u128> {
         self.inner.get_gas_price()
+    }
+
+    fn get_account_info(
+        &self,
+        address: Address,
+    ) -> RpcWithBlock<Address, alloy_rpc_types_eth::AccountInfo> {
+        self.inner.get_account_info(address)
     }
 
     fn get_account(&self, address: Address) -> RpcWithBlock<Address, alloy_consensus::Account> {
@@ -497,6 +535,14 @@ where
         self.inner.get_transaction_by_hash(hash)
     }
 
+    fn get_transaction_by_sender_nonce(
+        &self,
+        sender: Address,
+        nonce: u64,
+    ) -> ProviderCall<(Address, U64), Option<N::TransactionResponse>> {
+        self.inner.get_transaction_by_sender_nonce(sender, nonce)
+    }
+
     fn get_transaction_by_block_hash_and_index(
         &self,
         block_hash: B256,
@@ -596,7 +642,7 @@ where
             if let FillerControlFlow::Missing(missing) = self.filler.status(builder) {
                 // TODO: improve this.
                 // blocked by #431
-                let message = format!("missing properties: {:?}", missing);
+                let message = format!("missing properties: {missing:?}");
                 return Err(RpcError::local_usage_str(&message));
             }
         }
@@ -605,33 +651,32 @@ where
         self.inner.send_transaction_internal(tx).await
     }
 
-    #[cfg(feature = "pubsub")]
-    async fn subscribe_blocks(
-        &self,
-    ) -> TransportResult<alloy_pubsub::Subscription<N::HeaderResponse>> {
-        self.inner.subscribe_blocks().await
+    async fn sign_transaction(&self, tx: N::TransactionRequest) -> TransportResult<Bytes> {
+        let tx = self.fill(tx).await?;
+        let tx = tx.try_into_request().map_err(TransportError::local_usage)?;
+        self.inner.sign_transaction(tx).await
     }
 
     #[cfg(feature = "pubsub")]
-    async fn subscribe_pending_transactions(
-        &self,
-    ) -> TransportResult<alloy_pubsub::Subscription<B256>> {
-        self.inner.subscribe_pending_transactions().await
+    fn subscribe_blocks(&self) -> GetSubscription<(SubscriptionKind,), N::HeaderResponse> {
+        self.inner.subscribe_blocks()
     }
 
     #[cfg(feature = "pubsub")]
-    async fn subscribe_full_pending_transactions(
-        &self,
-    ) -> TransportResult<alloy_pubsub::Subscription<N::TransactionResponse>> {
-        self.inner.subscribe_full_pending_transactions().await
+    fn subscribe_pending_transactions(&self) -> GetSubscription<(SubscriptionKind,), B256> {
+        self.inner.subscribe_pending_transactions()
     }
 
     #[cfg(feature = "pubsub")]
-    async fn subscribe_logs(
+    fn subscribe_full_pending_transactions(
         &self,
-        filter: &Filter,
-    ) -> TransportResult<alloy_pubsub::Subscription<Log>> {
-        self.inner.subscribe_logs(filter).await
+    ) -> GetSubscription<(SubscriptionKind, Params), N::TransactionResponse> {
+        self.inner.subscribe_full_pending_transactions()
+    }
+
+    #[cfg(feature = "pubsub")]
+    fn subscribe_logs(&self, filter: &Filter) -> GetSubscription<(SubscriptionKind, Params), Log> {
+        self.inner.subscribe_logs(filter)
     }
 
     #[cfg(feature = "pubsub")]

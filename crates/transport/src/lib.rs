@@ -6,14 +6,21 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+use alloy_primitives as _;
+
 mod boxed;
 pub use boxed::{BoxTransport, IntoBoxTransport};
+
+mod dual;
+pub use dual::*;
 
 mod connect;
 pub use connect::TransportConnect;
 
 mod common;
 pub use common::Authorization;
+
+pub mod mock;
 
 mod error;
 #[doc(hidden)]
@@ -39,3 +46,12 @@ pub type TransportFut<'a, T = alloy_json_rpc::ResponsePacket, E = TransportError
 
 /// Future for RPC-level requests.
 pub type RpcFut<'a, T> = futures_utils_wasm::BoxFuture<'a, TransportResult<T>>;
+
+/// Cross platform time types.
+mod time {
+    #[cfg(target_family = "wasm")]
+    pub(crate) use wasmtimer::std::Instant;
+
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) use std::time::Instant;
+}

@@ -1,18 +1,14 @@
-use crate::eip4844::Blob;
-#[cfg(feature = "kzg")]
-use c_kzg::{KzgCommitment, KzgProof};
-
 use crate::eip4844::{
-    utils::WholeFe, BYTES_PER_BLOB, FIELD_ELEMENTS_PER_BLOB, FIELD_ELEMENT_BYTES_USIZE,
+    utils::WholeFe, Blob, BYTES_PER_BLOB, FIELD_ELEMENTS_PER_BLOB, FIELD_ELEMENT_BYTES_USIZE,
 };
 use alloc::vec::Vec;
 
-#[cfg(feature = "kzg")]
-use crate::eip4844::env_settings::EnvKzgSettings;
 #[cfg(any(feature = "kzg", feature = "arbitrary"))]
 use crate::eip4844::BlobTransactionSidecar;
 #[cfg(feature = "kzg")]
 use crate::eip4844::Bytes48;
+#[cfg(feature = "kzg")]
+use crate::{eip4844::env_settings::EnvKzgSettings, eip7594::BlobTransactionSidecarEip7594};
 use core::cmp;
 
 /// A builder for creating a [`BlobTransactionSidecar`].
@@ -50,6 +46,7 @@ impl PartialSidecar {
     }
 
     /// Get a reference to the blobs currently in the builder.
+    #[allow(clippy::missing_const_for_fn)]
     pub fn blobs(&self) -> &[Blob] {
         &self.blobs
     }
@@ -383,8 +380,8 @@ impl<T: SidecarCoder> SidecarBuilder<T> {
         for blob in &self.inner.blobs {
             // SAFETY: same size
             let blob = unsafe { core::mem::transmute::<&Blob, &c_kzg::Blob>(blob) };
-            let commitment = KzgCommitment::blob_to_kzg_commitment(blob, settings)?;
-            let proof = KzgProof::compute_blob_kzg_proof(blob, &commitment.to_bytes(), settings)?;
+            let commitment = settings.blob_to_kzg_commitment(blob)?;
+            let proof = settings.compute_blob_kzg_proof(blob, &commitment.to_bytes())?;
 
             // SAFETY: same size
             unsafe {
@@ -407,6 +404,35 @@ impl<T: SidecarCoder> SidecarBuilder<T> {
     /// Take the blobs from the builder, without committing them to a KZG proof.
     pub fn take(self) -> Vec<Blob> {
         self.inner.blobs
+    }
+
+    /// Build the sidecar for eip-7594 from the data with the provided settings.
+    #[cfg(feature = "kzg")]
+    pub fn builder_7594_sidecar(
+        self,
+        settings: &c_kzg::KzgSettings,
+    ) -> Result<BlobTransactionSidecarEip7594, c_kzg::Error> {
+        let mut commitments = Vec::with_capacity(self.inner.blobs.len());
+        let mut proofs = Vec::with_capacity(self.inner.blobs.len());
+        for blob in &self.inner.blobs {
+            // SAFETY: same size
+            let blob = unsafe { core::mem::transmute::<&Blob, &c_kzg::Blob>(blob) };
+            let commitment = settings.blob_to_kzg_commitment(blob)?;
+            let (_cells, kzg_proofs) = settings.compute_cells_and_kzg_proofs(blob)?;
+
+            // SAFETY: same size
+            unsafe {
+                commitments
+                    .push(core::mem::transmute::<c_kzg::Bytes48, Bytes48>(commitment.to_bytes()));
+                for kzg_proof in kzg_proofs.iter() {
+                    proofs.push(core::mem::transmute::<c_kzg::Bytes48, Bytes48>(
+                        kzg_proof.to_bytes(),
+                    ));
+                }
+            }
+        }
+
+        Ok(BlobTransactionSidecarEip7594::new(self.inner.blobs, commitments, proofs))
     }
 }
 

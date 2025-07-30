@@ -38,7 +38,7 @@ impl<L, R> JoinFill<L, R> {
     /// Get a mutable reference to the left filler.
     ///
     /// NB: this function exists to enable the [`crate::WalletProvider`] impl.
-    pub(crate) fn right_mut(&mut self) -> &mut R {
+    pub(crate) const fn right_mut(&mut self) -> &mut R {
         &mut self.right
     }
 }
@@ -150,6 +150,7 @@ where
     N: Network,
 {
     type Provider = FillProvider<Self, P, N>;
+
     fn layer(&self, inner: P) -> Self::Provider {
         FillProvider::new(inner, self.clone())
     }

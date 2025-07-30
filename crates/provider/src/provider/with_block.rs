@@ -18,7 +18,7 @@ pub struct ParamsWithBlock<Params: RpcSend> {
 
 impl<Params: RpcSend> ParamsWithBlock<Params> {
     /// Create a new instance of `ParamsWithBlock`.
-    pub fn new(params: Params, block_id: BlockId) -> Self {
+    pub const fn new(params: Params, block_id: BlockId) -> Self {
         Self { params, block_id }
     }
 }
@@ -49,7 +49,7 @@ impl<Params: RpcSend> serde::Serialize for ParamsWithBlock<Params> {
 type ProviderCallProducer<Params, Resp, Output, Map> =
     Box<dyn Fn(BlockId) -> ProviderCall<ParamsWithBlock<Params>, Resp, Output, Map> + Send>;
 
-/// Container for varous types of calls dependent on a block id.
+/// Container for various types of calls dependent on a block id.
 enum WithBlockInner<Params, Resp, Output = Resp, Map = fn(Resp) -> Output>
 where
     Params: RpcSend,

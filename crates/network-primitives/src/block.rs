@@ -1,5 +1,4 @@
 use alloy_primitives::B256;
-use serde::{Deserialize, Serialize};
 
 use crate::TransactionResponse;
 use alloc::{vec, vec::Vec};
@@ -9,8 +8,9 @@ use core::slice;
 
 /// Block Transactions depending on the boolean attribute of `eth_getBlockBy*`,
 /// or if used by `eth_getUncle*`
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
 pub enum BlockTransactions<T> {
     /// Full transactions
     Full(Vec<T>),
@@ -39,6 +39,11 @@ impl<T> BlockTransactions<T> {
             Self::Hashes(hashes) => Some(hashes),
             _ => None,
         }
+    }
+
+    /// Returns the first transaction if the transactions are full.
+    pub fn first_transaction(&self) -> Option<&T> {
+        self.as_transactions().and_then(|txs| txs.first())
     }
 
     /// Returns true if the enum variant is used for full transactions.
@@ -133,8 +138,8 @@ impl<T> BlockTransactions<T> {
     pub fn try_into_transactions(self) -> Result<Vec<T>, ValueError<Self>> {
         match self {
             Self::Full(txs) => Ok(txs),
-            txs @ Self::Hashes(_) => Err(ValueError::new(txs, "Unexpected hashes variant")),
-            txs @ Self::Uncle => Err(ValueError::new(txs, "Unexpected uncle variant")),
+            txs @ Self::Hashes(_) => Err(ValueError::new_static(txs, "Unexpected hashes variant")),
+            txs @ Self::Uncle => Err(ValueError::new_static(txs, "Unexpected uncle variant")),
         }
     }
 
@@ -175,11 +180,29 @@ impl<T: TransactionResponse> BlockTransactions<T> {
         }
     }
 
+    /// Converts `self` into `Hashes` if the given `condition` is true.
+    #[inline]
+    pub fn convert_to_hashes_if(&mut self, condition: bool) {
+        if !condition {
+            return;
+        }
+        self.convert_to_hashes();
+    }
+
     /// Converts `self` into `Hashes`.
     #[inline]
     pub fn into_hashes(mut self) -> Self {
         self.convert_to_hashes();
         self
+    }
+
+    /// Converts `self` into `Hashes` if the given `condition` is true.
+    #[inline]
+    pub fn into_hashes_if(self, condition: bool) -> Self {
+        if !condition {
+            return self;
+        }
+        self.into_hashes()
     }
 
     /// Returns an iterator over the transaction hashes.
@@ -284,6 +307,7 @@ impl<T: TransactionResponse> std::iter::FusedIterator for BlockTransactionHashes
 /// This essentially represents the `full:bool` argument in RPC calls that determine whether the
 /// response should include full transaction objects or just the hashes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BlockTransactionsKind {
     /// Only include hashes: [BlockTransactions::Hashes]
     #[default]

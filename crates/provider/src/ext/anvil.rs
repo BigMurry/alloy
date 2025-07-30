@@ -1,15 +1,17 @@
 //! This module extends the Ethereum JSON-RPC provider with the Anvil namespace's RPC methods.
 
-use crate::Provider;
-use alloy_network::Network;
+use crate::{PendingTransactionBuilder, Provider};
+use alloy_consensus::Blob;
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, TxHash, B256, U128, U256, U64};
 use alloy_rpc_types_anvil::{Forking, Metadata, MineOptions, NodeInfo, ReorgOptions};
 use alloy_rpc_types_eth::Block;
-use alloy_transport::TransportResult;
+use alloy_transport::{TransportError, TransportResult};
+use futures::try_join;
 
 /// Anvil namespace rpc interface that gives access to several non-standard RPC methods.
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
 pub trait AnvilApi<N: Network>: Send + Sync {
     // Not implemented:
     // - anvil_enable_traces: Not implemented in the Anvil RPC API.
@@ -23,6 +25,15 @@ pub trait AnvilApi<N: Network>: Send + Sync {
 
     /// If set to true will make every account impersonated.
     async fn anvil_auto_impersonate_account(&self, enabled: bool) -> TransportResult<()>;
+
+    /// Impersonates the `from` address in the given transaction request, optionally funds the
+    /// sender, sends the transaction, and optionally stops impersonating after execution based
+    /// on the provided config.
+    async fn anvil_send_impersonated_transaction_with_config(
+        &self,
+        request: N::TransactionRequest,
+        config: ImpersonateConfig,
+    ) -> TransportResult<PendingTransactionBuilder<N>>;
 
     /// Returns true if auto mining is enabled, and false.
     async fn anvil_get_auto_mine(&self) -> TransportResult<bool>;
@@ -144,15 +155,62 @@ pub trait AnvilApi<N: Network>: Send + Sync {
     /// Rollback the chain  
     async fn anvil_rollback(&self, depth: Option<u64>) -> TransportResult<()>;
 
+    /// Retrieves a blob by its versioned hash.
+    async fn anvil_get_blob_by_versioned_hash(
+        &self,
+        versioned_hash: B256,
+    ) -> TransportResult<Option<Blob>>;
+
+    /// Retrieves blobs by transaction hash.
+    async fn anvil_get_blobs_by_tx_hash(
+        &self,
+        tx_hash: TxHash,
+    ) -> TransportResult<Option<Vec<Blob>>>;
+
     /// Execute a transaction regardless of signature status.
     async fn eth_send_unsigned_transaction(
         &self,
         request: N::TransactionRequest,
     ) -> TransportResult<TxHash>;
+
+    /// Executes a transaction and waits for it to be mined, returning the receipt.
+    async fn eth_send_transaction_sync(
+        &self,
+        request: N::TransactionRequest,
+    ) -> TransportResult<N::ReceiptResponse>;
+
+    /// Sends a raw transaction and waits for it to be mined, returning the receipt.
+    async fn eth_send_raw_transaction_sync(
+        &self,
+        request: Bytes,
+    ) -> TransportResult<N::ReceiptResponse>;
+
+    /// Sets impersonated transaction
+    async fn anvil_send_impersonated_transaction(
+        &self,
+        request: N::TransactionRequest,
+    ) -> TransportResult<TxHash>;
+
+    /// Modifies the ERC20 balance of an account.
+    async fn anvil_deal_erc20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> TransportResult<()>;
+
+    /// Modifies the ERC20 allowance of an account.
+    async fn anvil_set_erc20_allowance(
+        &self,
+        owner: Address,
+        spender: Address,
+        token: Address,
+        allowance: U256,
+    ) -> TransportResult<()>;
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
 impl<N, P> AnvilApi<N> for P
 where
     N: Network,
@@ -317,28 +375,159 @@ where
         self.client().request("anvil_rollback", (depth,)).await
     }
 
+    async fn anvil_get_blob_by_versioned_hash(&self, hash: B256) -> TransportResult<Option<Blob>> {
+        self.client().request("anvil_getBlobByHash", (hash,)).await
+    }
+
+    async fn anvil_get_blobs_by_tx_hash(&self, hash: TxHash) -> TransportResult<Option<Vec<Blob>>> {
+        self.client().request("anvil_getBlobsByTransactionHash", (hash,)).await
+    }
+
     async fn eth_send_unsigned_transaction(
         &self,
         request: N::TransactionRequest,
     ) -> TransportResult<TxHash> {
         self.client().request("eth_sendUnsignedTransaction", (request,)).await
     }
+
+    async fn eth_send_transaction_sync(
+        &self,
+        request: N::TransactionRequest,
+    ) -> TransportResult<N::ReceiptResponse> {
+        self.client().request("eth_sendTransactionSync", (request,)).await
+    }
+
+    async fn eth_send_raw_transaction_sync(
+        &self,
+        request: Bytes,
+    ) -> TransportResult<N::ReceiptResponse> {
+        self.client().request("eth_sendRawTransactionSync", (request,)).await
+    }
+
+    async fn anvil_send_impersonated_transaction(
+        &self,
+        request: N::TransactionRequest,
+    ) -> TransportResult<TxHash> {
+        self.client().request("eth_sendTransaction", (request,)).await
+    }
+
+    async fn anvil_deal_erc20(
+        &self,
+        address: Address,
+        token_address: Address,
+        balance: U256,
+    ) -> TransportResult<()> {
+        self.client().request("anvil_dealERC20", (address, token_address, balance)).await
+    }
+
+    async fn anvil_set_erc20_allowance(
+        &self,
+        owner: Address,
+        spender: Address,
+        token: Address,
+        allowance: U256,
+    ) -> TransportResult<()> {
+        self.client().request("anvil_setERC20Allowance", (owner, spender, token, allowance)).await
+    }
+
+    async fn anvil_send_impersonated_transaction_with_config(
+        &self,
+        request: N::TransactionRequest,
+        config: ImpersonateConfig,
+    ) -> TransportResult<PendingTransactionBuilder<N>> {
+        let from = request.from().ok_or_else(|| {
+            TransportError::from(alloy_transport::TransportErrorKind::Custom(
+                "TransactionRequest must have a `from` address set.".to_string().into(),
+            ))
+        })?;
+
+        let impersonate_future = self.anvil_impersonate_account(from);
+
+        if let Some(amount) = config.fund_amount {
+            let fund_future = self.anvil_set_balance(from, amount);
+            try_join!(fund_future, impersonate_future)?;
+        } else {
+            impersonate_future.await?;
+        }
+
+        let tx_hash = self.anvil_send_impersonated_transaction(request).await?;
+        let pending = PendingTransactionBuilder::new(self.root().clone(), tx_hash);
+
+        if config.stop_impersonate {
+            self.anvil_stop_impersonating_account(from).await?;
+        }
+
+        Ok(pending)
+    }
+}
+
+/// Configuration for impersonated transactions, including optional funding and whether to stop
+/// impersonation.
+#[derive(Debug, Clone)]
+pub struct ImpersonateConfig {
+    /// Optional amount of ETH to fund the impersonated account.
+    pub fund_amount: Option<U256>,
+    /// Whether to stop impersonating after the transaction is sent.
+    pub stop_impersonate: bool,
+}
+
+impl Default for ImpersonateConfig {
+    fn default() -> Self {
+        Self { fund_amount: None, stop_impersonate: true }
+    }
+}
+
+impl ImpersonateConfig {
+    /// Set the impersonation to continue after the transaction.
+    pub const fn keep_impersonate(mut self) -> Self {
+        self.stop_impersonate = false;
+        self
+    }
+
+    /// Set the impersonation to stop after the transaction.
+    pub const fn stop_impersonate(mut self) -> Self {
+        self.stop_impersonate = true;
+        self
+    }
+
+    /// Set the funding amount for the impersonated account.
+    pub const fn fund(mut self, amount: U256) -> Self {
+        self.fund_amount = Some(amount);
+        self
+    }
+
+    /// Clear the funding amount.
+    pub const fn no_fund(mut self) -> Self {
+        self.fund_amount = None;
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ProviderBuilder;
+    use crate::{
+        fillers::{ChainIdFiller, GasFiller},
+        ProviderBuilder,
+    };
+    use alloy_consensus::{SidecarBuilder, SimpleCoder};
     use alloy_eips::BlockNumberOrTag;
-    use alloy_network::TransactionBuilder;
-    use alloy_primitives::B256;
+    use alloy_network::{TransactionBuilder, TransactionBuilder4844};
+    use alloy_primitives::{address, B256};
     use alloy_rpc_types_eth::TransactionRequest;
+    use alloy_sol_types::{sol, SolCall};
 
     // use alloy_node_bindings::Anvil; (to be used in `test_anvil_reset`)
+    const FORK_URL: &str = "https://reth-ethereum.ithaca.xyz/rpc";
 
     #[tokio::test]
     async fn test_anvil_impersonate_account_stop_impersonating_account() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .with_simple_nonce_management()
+            .filler(GasFiller)
+            .filler(ChainIdFiller::default())
+            .connect_anvil();
 
         let impersonate = Address::random();
         let to = Address::random();
@@ -373,8 +562,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_anvil_impersonated_send_with_config() {
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .with_simple_nonce_management()
+            .filler(GasFiller)
+            .filler(ChainIdFiller::default())
+            .connect_anvil();
+
+        let impersonate = Address::random();
+        let to = Address::random();
+        let val = U256::from(1337);
+        let funding = U256::from(1e18 as u64);
+
+        let tx = TransactionRequest::default().with_from(impersonate).with_to(to).with_value(val);
+
+        let config = ImpersonateConfig { fund_amount: Some(funding), stop_impersonate: true };
+
+        let pending = provider
+            .anvil_send_impersonated_transaction_with_config(tx.clone(), config)
+            .await
+            .expect("impersonated send failed");
+        let receipt = pending.get_receipt().await.unwrap();
+        assert_eq!(receipt.from, impersonate);
+
+        let recipient_balance = provider.get_balance(to).await.unwrap();
+        assert_eq!(recipient_balance, val);
+    }
+
+    #[tokio::test]
     async fn test_anvil_auto_impersonate_account() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .with_simple_nonce_management()
+            .filler(GasFiller)
+            .filler(ChainIdFiller::default())
+            .connect_anvil();
 
         let impersonate = Address::random();
         let to = Address::random();
@@ -412,7 +635,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_get_auto_mine_set_auto_mine() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         provider.anvil_set_auto_mine(false).await.unwrap();
 
@@ -427,7 +650,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_mine() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let start_num = provider.get_block_number().await.unwrap();
 
@@ -440,7 +663,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_interval_mining() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         provider.anvil_set_interval_mining(1).await.unwrap();
 
@@ -455,7 +678,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_drop_transaction() {
-        let provider = ProviderBuilder::new().on_anvil_with_wallet();
+        let provider = ProviderBuilder::new().connect_anvil_with_wallet();
 
         provider.anvil_set_auto_mine(false).await.unwrap();
 
@@ -483,7 +706,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_drop_all_transactions() {
-        let provider = ProviderBuilder::new().on_anvil_with_wallet();
+        let provider = ProviderBuilder::new().connect_anvil_with_wallet();
 
         provider.anvil_set_auto_mine(false).await.unwrap();
 
@@ -517,7 +740,7 @@ mod tests {
     //     let fork2 = Anvil::default().chain_id(888).spawn();
 
     //     let provider = ProviderBuilder::new()
-    //         .on_anvil_with_config(|config| config.fork(fork1.endpoint_url().to_string()));
+    //         .connect_anvil_with_config(|config| config.fork(fork1.endpoint_url().to_string()));
 
     //     let chain_id = provider.get_chain_id().await.unwrap();
     //     assert_eq!(chain_id, 777);
@@ -536,7 +759,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_chain_id() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let chain_id = 1337;
         provider.anvil_set_chain_id(chain_id).await.unwrap();
@@ -547,7 +770,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_balance() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let address = Address::random();
         let balance = U256::from(1337);
@@ -559,7 +782,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_code() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let address = Address::random();
         provider.anvil_set_code(address, Bytes::from("0xbeef")).await.unwrap();
@@ -570,7 +793,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_nonce() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let address = Address::random();
         let nonce = 1337;
@@ -582,7 +805,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_storage_at() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let address = Address::random();
         let slot = U256::from(1337);
@@ -595,14 +818,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_logging() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         provider.anvil_set_logging(true).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_anvil_set_min_gas_price() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let gas = U256::from(1337);
 
@@ -616,7 +839,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_next_block_base_fee_per_gas() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let basefee = 1337;
         provider.anvil_set_next_block_base_fee_per_gas(basefee).await.unwrap();
@@ -630,7 +853,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_coinbase() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let coinbase = Address::random();
         provider.anvil_set_coinbase(coinbase).await.unwrap();
@@ -643,7 +866,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_dump_state_load_state() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let state = provider.anvil_dump_state().await.unwrap();
 
@@ -656,7 +879,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_node_info() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let latest_block =
             provider.get_block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
@@ -670,7 +893,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_metadata() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let client_version = provider.get_client_version().await.unwrap();
         let chain_id = provider.get_chain_id().await.unwrap();
@@ -683,7 +906,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_remove_pool_transactions() {
-        let provider = ProviderBuilder::new().on_anvil_with_wallet();
+        let provider = ProviderBuilder::new().connect_anvil_with_wallet();
 
         provider.anvil_set_auto_mine(false).await.unwrap();
 
@@ -712,7 +935,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_snapshot_revert() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let snapshot_id = provider.anvil_snapshot().await.unwrap();
 
@@ -748,7 +971,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_increase_time() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let timestamp = provider
             .get_block_by_number(BlockNumberOrTag::Latest)
@@ -765,7 +988,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_next_block_timestamp() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let timestamp = provider
             .get_block_by_number(BlockNumberOrTag::Latest)
@@ -786,7 +1009,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_time() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         provider.anvil_set_time(0).await.unwrap();
 
@@ -797,7 +1020,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_block_gas_limit() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let block_gas_limit = 1337;
         assert!(provider.anvil_set_block_gas_limit(block_gas_limit).await.unwrap());
@@ -811,7 +1034,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_block_timestamp_interval() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         provider.anvil_set_block_timestamp_interval(1).await.unwrap();
 
@@ -854,11 +1077,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_evm_mine_single_block() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let start_num = provider.get_block_number().await.unwrap();
 
-        for (idx, _) in std::iter::repeat(()).take(10).enumerate() {
+        for (idx, _) in std::iter::repeat_n((), 10).enumerate() {
             provider.evm_mine(None).await.unwrap();
             let num = provider.get_block_number().await.unwrap();
             assert_eq!(num, start_num + idx as u64 + 1);
@@ -871,7 +1094,7 @@ mod tests {
     // TODO: Fix this test, only a single block is being mined regardless of the `blocks` parameter.
     // #[tokio::test]
     // async fn test_evm_mine_with_configuration() {
-    //     let provider = ProviderBuilder::new().on_anvil();
+    //     let provider = ProviderBuilder::new().connect_anvil();
 
     //     let start_num = provider.get_block_number().await.unwrap();
 
@@ -886,11 +1109,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_mine_detailed_single_block() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let start_num = provider.get_block_number().await.unwrap();
 
-        for (idx, _) in std::iter::repeat(()).take(10).enumerate() {
+        for (idx, _) in std::iter::repeat_n((), 10).enumerate() {
             provider.anvil_mine_detailed(None).await.unwrap();
             let num = provider.get_block_number().await.unwrap();
             assert_eq!(num, start_num + idx as u64 + 1);
@@ -903,7 +1126,7 @@ mod tests {
     // TODO: Fix this test, only a single block is being mined regardless of the `blocks` parameter.
     // #[tokio::test]
     // async fn test_anvil_mine_detailed_with_configuration() {
-    //     let provider = ProviderBuilder::new().on_anvil();
+    //     let provider = ProviderBuilder::new().connect_anvil();
 
     //     let start_num = provider.get_block_number().await.unwrap();
 
@@ -925,7 +1148,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_set_rpc_url() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let url = "https://example.com".to_string();
         provider.anvil_set_rpc_url(url.clone()).await.unwrap();
@@ -933,7 +1156,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_anvil_reorg() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         // Mine two blocks
         provider.anvil_mine(Some(2), None).await.unwrap();
@@ -950,7 +1173,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_anvil_rollback() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         // Mine two blocks
         provider.anvil_mine(Some(2), None).await.unwrap();
@@ -967,7 +1190,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_eth_send_unsigned_transaction() {
-        let provider = ProviderBuilder::new().on_anvil();
+        let provider = ProviderBuilder::new().connect_anvil();
 
         let alice = Address::random();
         let bob = Address::random();
@@ -992,5 +1215,138 @@ mod tests {
         let res = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
         assert_eq!(res.from, alice);
         assert_eq!(res.to, Some(bob));
+    }
+
+    #[tokio::test]
+    async fn test_anvil_get_blob_by_versioned_hash() {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    let provider = ProviderBuilder::new()
+                        .connect_anvil_with_wallet_and_config(|anvil| {
+                            anvil.fork(FORK_URL).args(["--hardfork", "cancun"])
+                        })
+                        .unwrap();
+
+                    let accounts = provider.get_accounts().await.unwrap();
+                    let alice = accounts[0];
+                    let bob = accounts[1];
+                    let sidecar: SidecarBuilder<SimpleCoder> =
+                        SidecarBuilder::from_slice(b"Blobs are fun!");
+                    let sidecar = sidecar.build().unwrap();
+
+                    let tx = TransactionRequest::default()
+                        .with_from(alice)
+                        .with_to(bob)
+                        .with_blob_sidecar(sidecar.clone());
+
+                    let pending_tx = provider.send_transaction(tx).await.unwrap();
+                    let _receipt = pending_tx.get_receipt().await.unwrap();
+                    let hash = sidecar.versioned_hash_for_blob(0).unwrap();
+
+                    let blob =
+                        provider.anvil_get_blob_by_versioned_hash(hash).await.unwrap().unwrap();
+
+                    assert_eq!(blob, sidecar.blobs[0]);
+                });
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_anvil_get_blobs_by_tx_hash() {
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    let provider = ProviderBuilder::new()
+                        .connect_anvil_with_wallet_and_config(|anvil| {
+                            anvil.fork(FORK_URL).args(["--hardfork", "cancun"])
+                        })
+                        .unwrap();
+
+                    let accounts = provider.get_accounts().await.unwrap();
+                    let alice = accounts[0];
+                    let bob = accounts[1];
+                    let sidecar: SidecarBuilder<SimpleCoder> =
+                        SidecarBuilder::from_slice(b"Blobs are fun!");
+                    let sidecar = sidecar.build().unwrap();
+
+                    let tx = TransactionRequest::default()
+                        .with_from(alice)
+                        .with_to(bob)
+                        .with_blob_sidecar(sidecar.clone());
+
+                    let pending_tx = provider.send_transaction(tx).await.unwrap();
+                    let receipt = pending_tx.get_receipt().await.unwrap();
+                    let tx_hash = receipt.transaction_hash;
+
+                    let blobs =
+                        provider.anvil_get_blobs_by_tx_hash(tx_hash).await.unwrap().unwrap();
+
+                    assert_eq!(blobs, sidecar.blobs);
+                });
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_anvil_deal_erc20() {
+        let provider = ProviderBuilder::new().connect_anvil_with_config(|a| a.fork(FORK_URL));
+
+        let dai = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
+        let user = Address::random();
+        let amount = U256::from(1e18 as u64);
+
+        provider.anvil_deal_erc20(user, dai, amount).await.unwrap();
+
+        sol! {
+            function balanceOf(address owner) view returns (uint256);
+        }
+
+        let balance_of_call = balanceOfCall::new((user,));
+        let input = balanceOfCall::abi_encode(&balance_of_call);
+
+        let result = provider
+            .call(TransactionRequest::default().with_to(dai).with_input(input))
+            .await
+            .unwrap();
+        let balance = balanceOfCall::abi_decode_returns(&result).unwrap();
+
+        assert_eq!(balance, amount);
+    }
+
+    #[tokio::test]
+    async fn test_anvil_set_erc20_allowance() {
+        let provider = ProviderBuilder::new().connect_anvil_with_config(|a| a.fork(FORK_URL));
+
+        let dai = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
+        let owner = Address::random();
+        let spender = Address::random();
+        let amount = U256::from(1e18 as u64);
+
+        provider.anvil_set_erc20_allowance(owner, spender, dai, amount).await.unwrap();
+
+        sol! {
+            function allowance(address owner, address spender) view returns (uint256);
+        }
+
+        let allowance_call = allowanceCall::new((owner, spender));
+        let input = allowanceCall::abi_encode(&allowance_call);
+
+        let result = provider
+            .call(TransactionRequest::default().with_to(dai).with_input(input))
+            .await
+            .unwrap();
+        let allowance = allowanceCall::abi_decode_returns(&result).unwrap();
+
+        assert_eq!(allowance, amount);
     }
 }

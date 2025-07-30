@@ -2,7 +2,7 @@
 
 use crate::Signed;
 use alloc::vec::Vec;
-use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
+use alloy_eips::{eip2930::AccessList, eip4844::DATA_GAS_PER_BLOB, eip7702::SignedAuthorization};
 use alloy_primitives::{keccak256, Address, Bytes, ChainId, Selector, TxKind, B256, U256};
 use core::{any, fmt};
 
@@ -15,25 +15,31 @@ pub use eip2930::TxEip2930;
 mod eip7702;
 pub use eip7702::TxEip7702;
 
+mod envelope;
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub use envelope::serde_bincode_compat as envelope_serde_bincode_compat;
+pub use envelope::{EthereumTxEnvelope, TxEnvelope, TxType};
+
 /// [EIP-4844] constants, helpers, and types.
 pub mod eip4844;
-pub mod pooled;
-pub use pooled::PooledTransaction;
+pub use eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar};
 
-use alloy_eips::eip4844::DATA_GAS_PER_BLOB;
+mod eip4844_sidecar;
+#[cfg(feature = "kzg")]
+pub use eip4844_sidecar::BlobTransactionValidationError;
+pub use eip4844_sidecar::TxEip4844Sidecar;
+
+// Re-export 4844 helpers.
 pub use alloy_eips::eip4844::{
     builder::{SidecarBuilder, SidecarCoder, SimpleCoder},
     utils as eip4844_utils, Blob, BlobTransactionSidecar, Bytes48,
 };
-#[cfg(feature = "kzg")]
-pub use eip4844::BlobTransactionValidationError;
-pub use eip4844::{TxEip4844, TxEip4844Variant, TxEip4844WithSidecar};
+
+pub mod pooled;
+pub use pooled::PooledTransaction;
 
 /// Re-export for convenience
 pub use either::Either;
-
-mod envelope;
-pub use envelope::{TxEnvelope, TxType};
 
 mod legacy;
 pub use legacy::{from_eip155_value, to_eip155_value, TxLegacy};
@@ -43,7 +49,9 @@ mod rlp;
 pub use rlp::{RlpEcdsaDecodableTx, RlpEcdsaEncodableTx, RlpEcdsaTx};
 
 mod typed;
-pub use typed::TypedTransaction;
+pub use typed::{EthereumTypedTransaction, TypedTransaction};
+
+mod tx_type;
 
 mod meta;
 pub use meta::{TransactionInfo, TransactionMeta};
@@ -52,20 +60,24 @@ mod recovered;
 pub use recovered::{Recovered, SignerRecoverable};
 
 #[cfg(feature = "serde")]
-pub use legacy::signed_legacy_serde;
+pub use legacy::{signed_legacy_serde, untagged_legacy_serde};
 
 /// Bincode-compatible serde implementations for transaction types.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub mod serde_bincode_compat {
     pub use super::{
         eip1559::serde_bincode_compat::*, eip2930::serde_bincode_compat::*,
-        eip7702::serde_bincode_compat::*, legacy::serde_bincode_compat::*,
+        eip7702::serde_bincode_compat::*, envelope::serde_bincode_compat::*,
+        legacy::serde_bincode_compat::*, typed::serde_bincode_compat::*,
     };
 }
 
 use alloy_eips::Typed2718;
 
 /// Represents a minimal EVM transaction.
+/// Currently, EIP-1559, EIP-4844, and EIP-7702 support dynamic fees.
+/// We call these transactions "dynamic fee transactions".
+/// We call non dynamic fee transactions(EIP-155, EIP-2930) "legacy fee transactions".
 #[doc(alias = "Tx")]
 #[auto_impl::auto_impl(&, Arc)]
 pub trait Transaction: Typed2718 + fmt::Debug + any::Any + Send + Sync + 'static {
@@ -81,16 +93,17 @@ pub trait Transaction: Typed2718 + fmt::Debug + any::Any + Send + Sync + 'static
     /// Get `gas_price`.
     fn gas_price(&self) -> Option<u128>;
 
-    /// Returns the EIP-1559 the maximum fee per gas the caller is willing to pay.
+    /// For dynamic fee transactions returns the maximum fee per gas the caller is willing to pay.
     ///
-    /// For legacy transactions this is `gas_price`.
+    /// For legacy fee transactions this is `gas_price`.
     ///
     /// This is also commonly referred to as the "Gas Fee Cap".
     fn max_fee_per_gas(&self) -> u128;
 
-    /// Returns the EIP-1559 Priority fee the caller is paying to the block author.
+    /// For dynamic fee transactions returns the Priority fee the caller is paying to the block
+    /// author.
     ///
-    /// This will return `None` for non-EIP1559 transactions
+    /// This will return `None` for legacy fee transactions
     fn max_priority_fee_per_gas(&self) -> Option<u128>;
 
     /// Max fee per blob gas for EIP-4844 transaction.
@@ -100,24 +113,24 @@ pub trait Transaction: Typed2718 + fmt::Debug + any::Any + Send + Sync + 'static
     /// This is also commonly referred to as the "Blob Gas Fee Cap".
     fn max_fee_per_blob_gas(&self) -> Option<u128>;
 
-    /// Return the max priority fee per gas if the transaction is an EIP-1559 transaction, and
+    /// Return the max priority fee per gas if the transaction is a dynamic fee transaction, and
     /// otherwise return the gas price.
     ///
     /// # Warning
     ///
     /// This is different than the `max_priority_fee_per_gas` method, which returns `None` for
-    /// non-EIP-1559 transactions.
+    /// legacy fee transactions.
     fn priority_fee_or_price(&self) -> u128;
 
     /// Returns the effective gas price for the given base fee.
     ///
-    /// If the transaction is a legacy or EIP2930 transaction, the gas price is returned.
+    /// If the transaction is a legacy fee transaction, the gas price is returned.
     fn effective_gas_price(&self, base_fee: Option<u64>) -> u128;
 
     /// Returns the effective tip for this transaction.
     ///
-    /// For EIP-1559 transactions: `min(max_fee_per_gas - base_fee, max_priority_fee_per_gas)`.
-    /// For legacy transactions: `gas_price - base_fee`.
+    /// For dynamic fee transactions: `min(max_fee_per_gas - base_fee, max_priority_fee_per_gas)`.
+    /// For legacy fee transactions: `gas_price - base_fee`.
     fn effective_tip_per_gas(&self, base_fee: u64) -> Option<u128> {
         let base_fee = base_fee as u128;
 
@@ -131,7 +144,7 @@ pub trait Transaction: Typed2718 + fmt::Debug + any::Any + Send + Sync + 'static
         // Calculate the difference between max_fee_per_gas and base_fee
         let fee = max_fee_per_gas - base_fee;
 
-        // Compare the fee with max_priority_fee_per_gas (or gas price for non-EIP1559 transactions)
+        // Compare the fee with max_priority_fee_per_gas (or gas price for legacy fee transactions)
         self.max_priority_fee_per_gas()
             .map_or(Some(fee), |priority_fee| Some(fee.min(priority_fee)))
     }
@@ -213,10 +226,16 @@ pub trait Transaction: Typed2718 + fmt::Debug + any::Any + Send + Sync + 'static
     }
 }
 
+/// A typed transaction envelope.
+pub trait TransactionEnvelope: Transaction {
+    /// The enum of transaction types.
+    type TxType: Typed2718;
+}
+
 /// A signable transaction.
 ///
 /// A transaction can have multiple signature types. This is usually
-/// [`alloy_primitives::PrimitiveSignature`], however, it may be different for future EIP-2718
+/// [`alloy_primitives::Signature`], however, it may be different for future EIP-2718
 /// transaction types, or in other networks. For example, in Optimism, the deposit transaction
 /// signature is the unit type `()`.
 #[doc(alias = "SignableTx", alias = "TxSignable")]
@@ -272,7 +291,7 @@ pub trait SignableTransaction<Signature>: Transaction {
     }
 }
 
-// TODO: Remove in favor of dyn trait upcasting (TBD, see https://github.com/rust-lang/rust/issues/65991#issuecomment-1903120162)
+// TODO(MSRV-1.86): Remove in favor of dyn trait upcasting
 #[doc(hidden)]
 impl<S: 'static> dyn SignableTransaction<S> {
     pub fn __downcast_ref<T: any::Any>(&self) -> Option<&T> {
@@ -535,5 +554,73 @@ where
             Self::Left(tx) => tx.authorization_count(),
             Self::Right(tx) => tx.authorization_count(),
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(unused_imports)]
+mod tests {
+    use crate::{Signed, TransactionEnvelope, TxEip1559, TxEnvelope, TxType};
+    use alloy_primitives::Signature;
+    use rand::Rng;
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_custom_envelope() {
+        use serde::{Serialize, Serializer};
+        fn serialize_with<S: Serializer>(
+            tx: &Signed<TxEip1559>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error> {
+            #[derive(Serialize)]
+            struct WithExtra<'a> {
+                #[serde(flatten)]
+                inner: &'a Signed<TxEip1559>,
+                extra: &'a str,
+            }
+            WithExtra { inner: tx, extra: "extra" }.serialize(serializer)
+        }
+
+        #[derive(Debug, Clone, TransactionEnvelope)]
+        #[envelope(alloy_consensus = crate, tx_type_name = MyTxType)]
+        enum MyEnvelope {
+            #[envelope(flatten)]
+            Ethereum(TxEnvelope),
+            #[envelope(ty = 10)]
+            MyTx(Signed<TxEip1559>),
+            #[envelope(ty = 11)]
+            #[serde(serialize_with = "serialize_with")]
+            AnotherMyTx(Signed<TxEip1559>),
+        }
+
+        assert_eq!(u8::from(MyTxType::Ethereum(TxType::Eip1559)), 2);
+        assert_eq!(u8::from(MyTxType::MyTx), 10);
+        assert_eq!(MyTxType::try_from(2u8).unwrap(), MyTxType::Ethereum(TxType::Eip1559));
+        assert_eq!(MyTxType::try_from(10u8).unwrap(), MyTxType::MyTx);
+
+        let mut bytes = [0u8; 1024];
+        rand::thread_rng().fill(bytes.as_mut_slice());
+        let tx = Signed::new_unhashed(
+            TxEip1559 {
+                chain_id: 1,
+                gas_limit: 21000,
+                max_fee_per_gas: 1000,
+                max_priority_fee_per_gas: 1000,
+                ..Default::default()
+            },
+            Signature::new(Default::default(), Default::default(), Default::default()),
+        );
+
+        let my_tx = serde_json::to_string(&MyEnvelope::MyTx(tx.clone())).unwrap();
+        let another_my_tx = serde_json::to_string(&MyEnvelope::AnotherMyTx(tx)).unwrap();
+
+        assert_eq!(
+            my_tx,
+            r#"{"type":"0xa","chainId":"0x1","nonce":"0x0","gas":"0x5208","maxFeePerGas":"0x3e8","maxPriorityFeePerGas":"0x3e8","to":null,"value":"0x0","accessList":[],"input":"0x","r":"0x0","s":"0x0","yParity":"0x0","v":"0x0","hash":"0x2eaaca5609601faae806f5147abb8f51ae91cba12604bedc23a16f2776d5a97b"}"#
+        );
+        assert_eq!(
+            another_my_tx,
+            r#"{"type":"0xb","chainId":"0x1","nonce":"0x0","gas":"0x5208","maxFeePerGas":"0x3e8","maxPriorityFeePerGas":"0x3e8","to":null,"value":"0x0","accessList":[],"input":"0x","r":"0x0","s":"0x0","yParity":"0x0","v":"0x0","hash":"0x2eaaca5609601faae806f5147abb8f51ae91cba12604bedc23a16f2776d5a97b","extra":"extra"}"#
+        );
     }
 }
