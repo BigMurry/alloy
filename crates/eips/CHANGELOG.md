@@ -5,6 +5,106 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.35](https://github.com/alloy-rs/alloy/releases/tag/v1.0.35) - 2025-09-22
+
+### Features
+
+- Add bpo initalizers ([#2914](https://github.com/alloy-rs/alloy/issues/2914))
+
+### Miscellaneous Tasks
+
+- Release 1.0.35
+- Add helper for init blobparams ([#2913](https://github.com/alloy-rs/alloy/issues/2913))
+
+## [1.0.34](https://github.com/alloy-rs/alloy/releases/tag/v1.0.34) - 2025-09-21
+
+### Features
+
+- [eips] Add `MAX_TX_GAS_LIMIT_OSAKA` for EIP-7825 ([#2906](https://github.com/alloy-rs/alloy/issues/2906))
+
+### Miscellaneous Tasks
+
+- Release 1.0.34
+
+## [1.0.33](https://github.com/alloy-rs/alloy/releases/tag/v1.0.33) - 2025-09-19
+
+### Bug Fixes
+
+- [eip4844] Clippy no warning ([#2898](https://github.com/alloy-rs/alloy/issues/2898))
+
+### Miscellaneous Tasks
+
+- Release 1.0.33
+
+## [1.0.32](https://github.com/alloy-rs/alloy/releases/tag/v1.0.32) - 2025-09-16
+
+### Miscellaneous Tasks
+
+- Release 1.0.32
+
+## [1.0.31](https://github.com/alloy-rs/alloy/releases/tag/v1.0.31) - 2025-09-15
+
+### Miscellaneous Tasks
+
+- Release 1.0.31
+- Mark legacy blob gas fn deprecated ([#2863](https://github.com/alloy-rs/alloy/issues/2863))
+
+### Refactor
+
+- Consolidate effective gas price calculation into eip1559 module ([#2872](https://github.com/alloy-rs/alloy/issues/2872))
+
+## [1.0.30](https://github.com/alloy-rs/alloy/releases/tag/v1.0.30) - 2025-09-03
+
+### Miscellaneous Tasks
+
+- Release 1.0.30
+
+## [1.0.29](https://github.com/alloy-rs/alloy/releases/tag/v1.0.29) - 2025-09-03
+
+### Miscellaneous Tasks
+
+- Release 1.0.29
+
+## [1.0.28](https://github.com/alloy-rs/alloy/releases/tag/v1.0.28) - 2025-09-02
+
+### Features
+
+- Add Asref for recovered withencoded ([#2828](https://github.com/alloy-rs/alloy/issues/2828))
+
+### Miscellaneous Tasks
+
+- Release 1.0.28
+
+## [1.0.27](https://github.com/alloy-rs/alloy/releases/tag/v1.0.27) - 2025-08-26
+
+### Bug Fixes
+
+- [eip4844] Prevent overflow panic in fake_exponential with large excess blob gas ([#2806](https://github.com/alloy-rs/alloy/issues/2806))
+- [docs] Correct typos in EIP reference ([#2759](https://github.com/alloy-rs/alloy/issues/2759))
+
+### Features
+
+- Fusaka changes ([#2821](https://github.com/alloy-rs/alloy/issues/2821))
+- Add scale helper ([#2797](https://github.com/alloy-rs/alloy/issues/2797))
+
+### Miscellaneous Tasks
+
+- Release 1.0.27 ([#2822](https://github.com/alloy-rs/alloy/issues/2822))
+- Release 1.0.26
+- Release 1.0.25
+- Add encode helper ([#2789](https://github.com/alloy-rs/alloy/issues/2789))
+
+## [1.0.24](https://github.com/alloy-rs/alloy/releases/tag/v1.0.24) - 2025-08-06
+
+### Bug Fixes
+
+- Fix simple error `therefor` - `therefore` in eip1898.rs ([#2739](https://github.com/alloy-rs/alloy/issues/2739))
+
+### Miscellaneous Tasks
+
+- Release 1.0.24
+- Feature gate serde test ([#2765](https://github.com/alloy-rs/alloy/issues/2765))
+
 ## [1.0.23](https://github.com/alloy-rs/alloy/releases/tag/v1.0.23) - 2025-07-22
 
 ### Bug Fixes
@@ -14,6 +114,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Dependencies
 
 - Bump precompute default to 8 ([#2732](https://github.com/alloy-rs/alloy/issues/2732))
+
+### Miscellaneous Tasks
+
+- Release 1.0.23
 
 ## [1.0.22](https://github.com/alloy-rs/alloy/releases/tag/v1.0.22) - 2025-07-14
 

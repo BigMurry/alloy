@@ -5,6 +5,124 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.36](https://github.com/alloy-rs/alloy/releases/tag/v1.0.36) - 2025-09-24
+
+### Miscellaneous Tasks
+
+- Forward std optional ([#2917](https://github.com/alloy-rs/alloy/issues/2917))
+- Remove redundant copy ([#2916](https://github.com/alloy-rs/alloy/issues/2916))
+
+## [1.0.35](https://github.com/alloy-rs/alloy/releases/tag/v1.0.35) - 2025-09-22
+
+### Bug Fixes
+
+- Don't use serde private API ([#2909](https://github.com/alloy-rs/alloy/issues/2909))
+
+### Miscellaneous Tasks
+
+- Release 1.0.35
+
+## [1.0.34](https://github.com/alloy-rs/alloy/releases/tag/v1.0.34) - 2025-09-21
+
+### Miscellaneous Tasks
+
+- Release 1.0.34
+
+## [1.0.33](https://github.com/alloy-rs/alloy/releases/tag/v1.0.33) - 2025-09-19
+
+### Miscellaneous Tasks
+
+- Release 1.0.33
+
+## [1.0.32](https://github.com/alloy-rs/alloy/releases/tag/v1.0.32) - 2025-09-16
+
+### Bug Fixes
+
+- [consensus] Include EIP-7702 in ReceiptEnvelope Arbitrary range ([#2883](https://github.com/alloy-rs/alloy/issues/2883))
+
+### Miscellaneous Tasks
+
+- Release 1.0.32
+
+## [1.0.31](https://github.com/alloy-rs/alloy/releases/tag/v1.0.31) - 2025-09-15
+
+### Miscellaneous Tasks
+
+- Release 1.0.31
+
+### Refactor
+
+- Consolidate effective gas price calculation into eip1559 module ([#2872](https://github.com/alloy-rs/alloy/issues/2872))
+
+## [1.0.30](https://github.com/alloy-rs/alloy/releases/tag/v1.0.30) - 2025-09-03
+
+### Miscellaneous Tasks
+
+- Release 1.0.30
+
+## [1.0.29](https://github.com/alloy-rs/alloy/releases/tag/v1.0.29) - 2025-09-03
+
+### Dependencies
+
+- Revert "chore(deps): internal dep bumps" ([#2839](https://github.com/alloy-rs/alloy/issues/2839))
+
+### Miscellaneous Tasks
+
+- Release 1.0.29
+
+## [1.0.28](https://github.com/alloy-rs/alloy/releases/tag/v1.0.28) - 2025-09-02
+
+### Dependencies
+
+- [deps] Internal dep bumps ([#2834](https://github.com/alloy-rs/alloy/issues/2834))
+
+### Features
+
+- Add Asref for recovered withencoded ([#2828](https://github.com/alloy-rs/alloy/issues/2828))
+
+### Miscellaneous Tasks
+
+- Release 1.0.28
+- Add into_envelope helper ([#2832](https://github.com/alloy-rs/alloy/issues/2832))
+- Use trait upcasting ([#2827](https://github.com/alloy-rs/alloy/issues/2827))
+
+### Styling
+
+- [Feature] Implement support different signatures in envelope macro ([#2794](https://github.com/alloy-rs/alloy/issues/2794))
+
+## [1.0.27](https://github.com/alloy-rs/alloy/releases/tag/v1.0.27) - 2025-08-26
+
+### Features
+
+- Fusaka changes ([#2821](https://github.com/alloy-rs/alloy/issues/2821))
+- Add TxHashRef trait and implementations ([#2751](https://github.com/alloy-rs/alloy/issues/2751))
+- Add helpers for encoding block from parts ([#2809](https://github.com/alloy-rs/alloy/issues/2809))
+- Expose alloy trie ([#2773](https://github.com/alloy-rs/alloy/issues/2773))
+
+### Miscellaneous Tasks
+
+- Release 1.0.27 ([#2822](https://github.com/alloy-rs/alloy/issues/2822))
+- Release 1.0.26
+- Release 1.0.25
+- Fix warnings ([#2799](https://github.com/alloy-rs/alloy/issues/2799))
+- Add typos ([#2787](https://github.com/alloy-rs/alloy/issues/2787))
+
+## [1.0.24](https://github.com/alloy-rs/alloy/releases/tag/v1.0.24) - 2025-08-06
+
+### Features
+
+- Add headerinfo helper type ([#2766](https://github.com/alloy-rs/alloy/issues/2766))
+
+### Miscellaneous Tasks
+
+- Release 1.0.24
+
+## [1.0.23](https://github.com/alloy-rs/alloy/releases/tag/v1.0.23) - 2025-07-22
+
+### Miscellaneous Tasks
+
+- Release 1.0.23
+
 ## [1.0.22](https://github.com/alloy-rs/alloy/releases/tag/v1.0.22) - 2025-07-14
 
 ### Miscellaneous Tasks

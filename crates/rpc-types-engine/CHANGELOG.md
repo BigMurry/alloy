@@ -5,10 +5,105 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.36](https://github.com/alloy-rs/alloy/releases/tag/v1.0.36) - 2025-09-24
+
+### Bug Fixes
+
+- [jwt] Report parent directory path in try_create_random ([#2921](https://github.com/alloy-rs/alloy/issues/2921))
+
+## [1.0.35](https://github.com/alloy-rs/alloy/releases/tag/v1.0.35) - 2025-09-22
+
+### Miscellaneous Tasks
+
+- Release 1.0.35
+
+## [1.0.34](https://github.com/alloy-rs/alloy/releases/tag/v1.0.34) - 2025-09-21
+
+### Miscellaneous Tasks
+
+- Release 1.0.34
+
+## [1.0.33](https://github.com/alloy-rs/alloy/releases/tag/v1.0.33) - 2025-09-19
+
+### Bug Fixes
+
+- [jwt] Jwt iat offset test flaky ([#2899](https://github.com/alloy-rs/alloy/issues/2899))
+
+### Miscellaneous Tasks
+
+- Release 1.0.33
+
+## [1.0.32](https://github.com/alloy-rs/alloy/releases/tag/v1.0.32) - 2025-09-16
+
+### Miscellaneous Tasks
+
+- Release 1.0.32
+
+## [1.0.31](https://github.com/alloy-rs/alloy/releases/tag/v1.0.31) - 2025-09-15
+
+### Features
+
+- [rpc-types-engine] Add transaction helper methods to ExecutionPayload ([#2871](https://github.com/alloy-rs/alloy/issues/2871))
+
+### Miscellaneous Tasks
+
+- Release 1.0.31
+
+## [1.0.30](https://github.com/alloy-rs/alloy/releases/tag/v1.0.30) - 2025-09-03
+
+### Miscellaneous Tasks
+
+- Release 1.0.30
+
+## [1.0.29](https://github.com/alloy-rs/alloy/releases/tag/v1.0.29) - 2025-09-03
+
+### Miscellaneous Tasks
+
+- Release 1.0.29
+
+## [1.0.28](https://github.com/alloy-rs/alloy/releases/tag/v1.0.28) - 2025-09-02
+
+### Miscellaneous Tasks
+
+- Release 1.0.28
+
+## [1.0.27](https://github.com/alloy-rs/alloy/releases/tag/v1.0.27) - 2025-08-26
+
+### Features
+
+- Fusaka changes ([#2821](https://github.com/alloy-rs/alloy/issues/2821))
+
+### Miscellaneous Tasks
+
+- Release 1.0.27 ([#2822](https://github.com/alloy-rs/alloy/issues/2822))
+- Release 1.0.26
+
+## [1.0.25](https://github.com/alloy-rs/alloy/releases/tag/v1.0.25) - 2025-08-19
+
+### Features
+
+- Complete execution payload getter methods ([#2782](https://github.com/alloy-rs/alloy/issues/2782))
+
+### Miscellaneous Tasks
+
+- Release 1.0.25
+- Release 1.0.25
+
+## [1.0.24](https://github.com/alloy-rs/alloy/releases/tag/v1.0.24) - 2025-08-06
+
+### Features
+
+- Add headerinfo helper type ([#2766](https://github.com/alloy-rs/alloy/issues/2766))
+
+### Miscellaneous Tasks
+
+- Release 1.0.24
+
 ## [1.0.23](https://github.com/alloy-rs/alloy/releases/tag/v1.0.23) - 2025-07-22
 
 ### Miscellaneous Tasks
 
+- Release 1.0.23
 - Add tx getters ([#2720](https://github.com/alloy-rs/alloy/issues/2720))
 
 ## [1.0.22](https://github.com/alloy-rs/alloy/releases/tag/v1.0.22) - 2025-07-14

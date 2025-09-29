@@ -5,6 +5,130 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.35](https://github.com/alloy-rs/alloy/releases/tag/v1.0.35) - 2025-09-22
+
+### Bug Fixes
+
+- [provider] Require context in eth_callMany params ([#2910](https://github.com/alloy-rs/alloy/issues/2910))
+
+### Miscellaneous Tasks
+
+- Release 1.0.35
+
+## [1.0.34](https://github.com/alloy-rs/alloy/releases/tag/v1.0.34) - 2025-09-21
+
+### Miscellaneous Tasks
+
+- Release 1.0.34
+
+## [1.0.33](https://github.com/alloy-rs/alloy/releases/tag/v1.0.33) - 2025-09-19
+
+### Miscellaneous Tasks
+
+- Release 1.0.33
+- Re-export transport ([#2895](https://github.com/alloy-rs/alloy/issues/2895))
+
+## [1.0.32](https://github.com/alloy-rs/alloy/releases/tag/v1.0.32) - 2025-09-16
+
+### Bug Fixes
+
+- [provider] Use correct admin_peerEvents subscription method ([#2877](https://github.com/alloy-rs/alloy/issues/2877))
+
+### Miscellaneous Tasks
+
+- Release 1.0.32
+
+## [1.0.31](https://github.com/alloy-rs/alloy/releases/tag/v1.0.31) - 2025-09-15
+
+### Bug Fixes
+
+- Skip receipt fetch if more confirmations are requested ([#2851](https://github.com/alloy-rs/alloy/issues/2851))
+
+### Documentation
+
+- Move EIP-4844 blob fee to BlobGasFiller ([#2857](https://github.com/alloy-rs/alloy/issues/2857))
+
+### Features
+
+- [providers] Pause heartbeat when no transactions are pending ([#2800](https://github.com/alloy-rs/alloy/issues/2800))
+
+### Miscellaneous Tasks
+
+- Release 1.0.31
+
+## [1.0.30](https://github.com/alloy-rs/alloy/releases/tag/v1.0.30) - 2025-09-03
+
+### Miscellaneous Tasks
+
+- Release 1.0.30
+
+## [1.0.29](https://github.com/alloy-rs/alloy/releases/tag/v1.0.29) - 2025-09-03
+
+### Miscellaneous Tasks
+
+- Release 1.0.29
+
+## [1.0.28](https://github.com/alloy-rs/alloy/releases/tag/v1.0.28) - 2025-09-02
+
+### Miscellaneous Tasks
+
+- Release 1.0.28
+
+### Other
+
+- Return correct arbitrum block numbers w/ BatchLayer ([#2835](https://github.com/alloy-rs/alloy/issues/2835))
+
+## [1.0.27](https://github.com/alloy-rs/alloy/releases/tag/v1.0.27) - 2025-08-26
+
+### Miscellaneous Tasks
+
+- Release 1.0.27 ([#2822](https://github.com/alloy-rs/alloy/issues/2822))
+
+## [1.0.26](https://github.com/alloy-rs/alloy/releases/tag/v1.0.26) - 2025-08-26
+
+### Features
+
+- Tenderly provider ext ([#2699](https://github.com/alloy-rs/alloy/issues/2699))
+- Add specialized debug trace methods ([#2815](https://github.com/alloy-rs/alloy/issues/2815))
+
+### Miscellaneous Tasks
+
+- Release 1.0.26
+- Release 1.0.26
+
+## [1.0.25](https://github.com/alloy-rs/alloy/releases/tag/v1.0.25) - 2025-08-19
+
+### Bug Fixes
+
+- [`CallBatchLayer`] Don't batch if single request ([#2397](https://github.com/alloy-rs/alloy/issues/2397))
+- Typo in code comment ([#2767](https://github.com/alloy-rs/alloy/issues/2767))
+
+### Miscellaneous Tasks
+
+- Release 1.0.25
+- Release 1.0.25
+- Add typos ([#2787](https://github.com/alloy-rs/alloy/issues/2787))
+
+### Styling
+
+- Multicall send support ([#2736](https://github.com/alloy-rs/alloy/issues/2736))
+
+## [1.0.24](https://github.com/alloy-rs/alloy/releases/tag/v1.0.24) - 2025-08-06
+
+### Bug Fixes
+
+- Poller breaks if server drops the filter ([#2755](https://github.com/alloy-rs/alloy/issues/2755))
+
+### Features
+
+- Allow ProviderBuilder to use TransportConnect and PubSubConnect ([#2764](https://github.com/alloy-rs/alloy/issues/2764))
+- Add value to Multicallitem trait ([#2746](https://github.com/alloy-rs/alloy/issues/2746))
+- Add with_failure_allowed ([#2749](https://github.com/alloy-rs/alloy/issues/2749))
+
+### Miscellaneous Tasks
+
+- Release 1.0.24
+
 ## [1.0.23](https://github.com/alloy-rs/alloy/releases/tag/v1.0.23) - 2025-07-22
 
 ### Bug Fixes
@@ -23,6 +147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Miscellaneous Tasks
 
+- Release 1.0.23
 - Added blob endpoints for anvil ([#2731](https://github.com/alloy-rs/alloy/issues/2731))
 
 ## [1.0.22](https://github.com/alloy-rs/alloy/releases/tag/v1.0.22) - 2025-07-14
