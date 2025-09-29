@@ -30,8 +30,9 @@ alloy-signer.workspace = true
 
 # eip712
 alloy-sol-types = { workspace = true, optional = true }
+trezor-client = {git = "https://github.com/BigMurry/trezor-firmware.git", branch = "feat/eip712", default-features = false, features = ["ethereum"]}
 
-trezor-client = { version = "=0.1.4", default-features = false, features = ["ethereum"]}
+# trezor-client = { version = "=0.1.4", default-features = false, features = ["ethereum"]}
 
 async-trait.workspace = true
 semver.workspace = true
