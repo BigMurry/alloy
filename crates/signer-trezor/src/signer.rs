@@ -5,15 +5,19 @@ use alloy_primitives::{
 };
 use alloy_signer::{sign_transaction_with_chain_id, Result, Signer};
 use async_trait::async_trait;
+#[cfg(feature = "eip712")]
+use serde::Serialize;
+#[cfg(feature = "eip712")]
+use std::collections::BTreeMap;
 use std::fmt;
-use trezor_client::client::Trezor;
+use trezor_client::client::{Eip712TypedData, Trezor};
 
 #[cfg(feature = "eip712")]
 use alloy_sol_types::{Eip712Domain, SolStruct};
 
 #[cfg(feature = "eip712")]
 use trezor_client::{
-    client::{handle_interaction, Signature as FirmwareSignature},
+    client::{handle_interaction, NameType, Signature as FirmwareSignature},
     protos, Error,
 };
 
@@ -66,7 +70,7 @@ impl Signer for TrezorSigner {
         payload: &T,
         domain: &Eip712Domain,
     ) -> Result<Signature> {
-        self.sign_typed_data_(&payload.eip712_hash_struct(), domain)
+        self.sign_typed_data_hash(&payload.eip712_hash_struct(), domain)
             .await
             .map_err(alloy_signer::Error::other)
     }
@@ -278,7 +282,8 @@ impl TrezorSigner {
     }
 
     #[cfg(feature = "eip712")]
-    async fn sign_typed_data_(
+    // NOTE: only trezor one support this method, deprecated in newer versions
+    async fn sign_typed_data_hash(
         &self,
         hash_struct: &B256,
         domain: &Eip712Domain,
@@ -305,6 +310,40 @@ impl TrezorSigner {
         )?)?;
 
         signature_from_trezor(sig)
+    }
+
+    #[cfg(feature = "eip712")]
+    /// sign 712 typed data
+    pub async fn sign_typed_data_value<T: SolStruct + Send + Sync + Serialize>(
+        &self,
+        payload: &T,
+        domain: &Eip712Domain,
+        primary_type: &str,
+        types_json: &str,
+        metamask_v4_compact: bool,
+    ) -> Result<Signature, TrezorError> {
+        let mut client = self.get_client()?;
+        let apath = Self::convert_path(&self.derivation);
+        let message_hash = payload.eip712_hash_struct().to_vec();
+        let domain = serde_json::to_value(domain)
+            .map_err(|_| TrezorError::SerdeErr("serialize domain failed".to_owned()))?;
+        let message = serde_json::to_value(payload)
+            .map_err(|_| TrezorError::SerdeErr("serialize payload failed".to_owned()))?;
+
+        let types = serde_json::from_str::<BTreeMap<String, Vec<NameType>>>(types_json)
+            .map_err(|_| TrezorError::SerdeErr("types json serde failed".to_owned()))?;
+
+        let data =
+            Eip712TypedData { types, primary_type: primary_type.to_owned(), domain, message };
+
+        let signature = client.ethereum_sign_eip712_data(
+            apath,
+            data,
+            metamask_v4_compact,
+            Some(message_hash),
+        )?;
+
+        signature_from_trezor(signature)
     }
 
     // helper which converts a derivation path to [u32]

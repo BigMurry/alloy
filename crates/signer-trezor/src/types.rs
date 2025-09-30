@@ -52,6 +52,9 @@ pub enum TrezorError {
     /// Could not retrieve device features.
     #[error("could not retrieve device features")]
     Features,
+
+    #[error("could not serialize data: {0}")]
+    SerdeErr(String),
 }
 
 impl From<TrezorError> for alloy_signer::Error {

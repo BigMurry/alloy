@@ -27,6 +27,8 @@ alloy-consensus = { workspace = true, features = ["std"] }
 alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-signer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 # eip712
 alloy-sol-types = { workspace = true, optional = true }
